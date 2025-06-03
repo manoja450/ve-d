@@ -978,7 +978,7 @@ int main(int argc, char *argv[]) {
     cout << "Saved plot: " << plotName << endl;
 
     // Plot 1: PMT Energy All vs After Veto
-    TCanvas* c_pmt_veto = new TCanvas("c_pmt_veto", "PMT Energy All vs After Veto", 800, 600);
+    TCanvas* c_pmt_veto = new TCanvas("c_pmt_veto", "PMT Energy All vs After Veto", 1200, 800);
     h_pmt_energy_all->SetLineColor(kRed);
     h_pmt_energy_without_veto->SetLineColor(kBlue);
     h_pmt_energy_all->SetLineWidth(2);
@@ -1000,7 +1000,7 @@ int main(int argc, char *argv[]) {
     cout << "Saved plot: " << plotName << endl;
 
     // Plot 2: PMT Energy for Cosmic, Untagged, Tagged, Veto-Passing
-    TCanvas* c_pmt_categories = new TCanvas("c_pmt_categories", "PMT Energy by Category", 800, 600);
+    TCanvas* c_pmt_categories = new TCanvas("c_pmt_categories", "PMT Energy by Category", 1200, 800);
     h_pmt_energy_cosmic->SetLineColor(kBlack);
     h_pmt_energy_untagged->SetLineColor(kGreen);
     h_pmt_energy_tagged->SetLineColor(kRed);
