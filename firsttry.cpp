@@ -719,7 +719,10 @@ int main(int argc, char *argv[]) {
             }
 
             // Fill overlaid plot histograms
-            h_pmt_energy_all->Fill(p.energy); // All events
+            // Modified: Exclude external triggers (triggerBits = 4, 8, 16) for h_pmt_energy_all
+            if (p.trigger != 4 && p.trigger != 8 && p.trigger != 16) {
+                h_pmt_energy_all->Fill(p.energy); // All events, excluding external triggers
+            }
             if (sipm_hit) {
                 h_pmt_energy_tagged->Fill(p.energy); // Tagged events (muons or Michels)
             }
