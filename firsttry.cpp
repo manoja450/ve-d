@@ -904,7 +904,7 @@ int main(int argc, char *argv[]) {
     c->Update();
     c->Modified();
     c->RedrawAxis();
-    string plotName = OUTPUT_DIR + "/Michel_dt.png";
+     plotName = OUTPUT_DIR + "/Michel_dt.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
 
