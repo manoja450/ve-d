@@ -719,7 +719,7 @@ int main(int argc, char *argv[]) {
             }
 
             // Fill overlaid plot histograms
-            // Modified: Exclude external triggers (triggerBits = 4, 8, 16) for h_pmt_energy_all
+            // Exclude external triggers (triggerBits = 4, 8, 16) for h_pmt_energy_all
             if (p.trigger != 4 && p.trigger != 8 && p.trigger != 16) {
                 h_pmt_energy_all->Fill(p.energy); // All events, excluding external triggers
             }
@@ -729,7 +729,7 @@ int main(int argc, char *argv[]) {
             if (p.trigger != 1 && p.trigger != 3 && p.trigger != 4 && p.trigger != 8 && p.trigger != 16 && !p.is_nue) {
                 h_pmt_energy_cosmic->Fill(p.energy);
             }
-            if (!p.is_muon && !p.is_michel && p.trigger == 2 && !sipm_hit) {
+            if (!p.is_muon && !p.is_michel && p.trigger == 2 && !sipm_hit && p.number >= 1) {
                 h_pmt_energy_untagged->Fill(p.energy);
                 h_sipm_untagged->Fill(p.all_sipm_energy);
                 h_pmt_hits_untagged->Fill(p.number);
@@ -904,7 +904,7 @@ int main(int argc, char *argv[]) {
     c->Update();
     c->Modified();
     c->RedrawAxis();
-    plotName = OUTPUT_DIR + "/Michel_dt.png";
+    string plotName = OUTPUT_DIR + "/Michel_dt.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
 
@@ -990,7 +990,7 @@ int main(int argc, char *argv[]) {
     h_pmt_energy_all->Draw();
     h_pmt_energy_without_veto->Draw("SAME");
     gPad->SetLogy(1);
-    TLegend* leg_veto = new TLegend(0.7, 0.7, 0.9, 0.9);
+    TLegend* leg_veto = new TLegend(0.15, 0.7, 0.35, 0.9); // Moved to top-left
     leg_veto->AddEntry(h_pmt_energy_all, "All Events", "l");
     leg_veto->AddEntry(h_pmt_energy_without_veto, "After Veto", "l");
     leg_veto->Draw();
@@ -1005,10 +1005,12 @@ int main(int argc, char *argv[]) {
     h_pmt_energy_untagged->SetLineColor(kGreen);
     h_pmt_energy_tagged->SetLineColor(kRed);
     h_pmt_energy_veto_pass->SetLineColor(kBlue);
-    h_pmt_energy_cosmic->SetLineWidth(2);
+    h_pmt_energy_cosmic->SetLineWidth(3); // Increased width for cosmic
     h_pmt_energy_untagged->SetLineWidth(2);
     h_pmt_energy_tagged->SetLineWidth(2);
     h_pmt_energy_veto_pass->SetLineWidth(2);
+    h_pmt_energy_untagged->SetLineStyle(2); // Dashed line for untagged
+    h_pmt_energy_tagged->SetLineStyle(2); // Dashed line for tagged
     h_pmt_energy_cosmic->SetTitle("PMT Energy by Category;Energy (p.e.);Events");
     double max_events_categories = std::max({h_pmt_energy_cosmic->GetMaximum(), h_pmt_energy_untagged->GetMaximum(),
                                       h_pmt_energy_tagged->GetMaximum(), h_pmt_energy_veto_pass->GetMaximum()});
@@ -1019,7 +1021,7 @@ int main(int argc, char *argv[]) {
     h_pmt_energy_tagged->Draw("SAME");
     h_pmt_energy_veto_pass->Draw("SAME");
     gPad->SetLogy(1);
-    TLegend* leg_categories = new TLegend(0.7, 0.7, 0.9, 0.9);
+    TLegend* leg_categories = new TLegend(0.15, 0.7, 0.35, 0.9); // Moved to top-left
     leg_categories->AddEntry(h_pmt_energy_cosmic, "Cosmic Events", "l");
     leg_categories->AddEntry(h_pmt_energy_untagged, "Untagged Events", "l");
     leg_categories->AddEntry(h_pmt_energy_tagged, "Tagged Events", "l");
