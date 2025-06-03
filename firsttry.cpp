@@ -10,6 +10,8 @@
 #include <TStyle.h>
 #include <TLegend.h>
 #include <TPaveStats.h>
+#include <TLatex.h>
+#include <TROOT.h>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -19,9 +21,7 @@
 #include <map>
 #include <set>
 #include <sys/stat.h>
-#include <unistd.h>
 #include <ctime>
-#include <uuid/uuid.h>
 #include <cmath>
 
 using std::cout;
@@ -30,7 +30,7 @@ using namespace std;
 
 // Constants
 const int N_PMTS = 12;
-const int PMT_CHANNEL_MAP[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+const int PMT_CHANNEL_MAP[12] = {0, 10, 7, 2, 6, 3, 8, 9, 11, 4, 5, 1};
 const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
 const double MUON_ENERGY_THRESHOLD = 50; // Min PMT energy for muon (p.e.)
@@ -58,8 +58,7 @@ string getTimestamp() {
 }
 const string OUTPUT_DIR = "./MyAnalysis_" + getTimestamp();
 
-const std::vector<double> SIDE_SIPM_THRESHOLDS = {750, 950, 1200, 1375, 525, 700, 700, 500}; // Channels 12-19 (ADC)
-const double TOP_SIPM_THRESHOLD = 450; // Channels 20-21 (ADC)
+const std::vector<double> SIDE_SIPM_THRESHOLDS = {750, 950, 1200, 1375, 525, 700, 700, 500, 450, 450}; // Channels 12-21
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 10.0; // Fit range max (µs)
 
@@ -92,10 +91,13 @@ struct tempPulse {
 
 // SPE fitting function
 Double_t SPEfit(Double_t *x, Double_t *par) {
-    Double_t term1 = par[0] * exp(-0.5 * pow((x[0] - par[1]) / par[2], 2));
-    Double_t term2 = par[3] * exp(-0.5 * pow((x[0] - par[4]) / par[5], 2));
-    Double_t term3 = par[6] * exp(-0.5 * pow((x[0] - sqrt(2) * par[4]) / sqrt(2 * pow(par[5], 2) - pow(par[2], 2)), 2));
-    Double_t term4 = par[7] * exp(-0.5 * pow((x[0] - sqrt(3) * pow(par[4], 2) / sqrt(3 * pow(par[5], 2) - 2 * pow(par[2], 2))), 2));
+    Double_t A0 = par[0], mu0 = par[1], sigma0 = par[2];
+    Double_t A1 = par[3], mu1 = par[4], sigma1 = par[5];
+    Double_t A2 = par[6], A3 = par[7];
+    Double_t term1 = A0 * exp(-0.5 * pow((x[0] - mu0) / sigma0, 2));
+    Double_t term2 = A1 * exp(-0.5 * pow((x[0] - mu1) / sigma1, 2));
+    Double_t term3 = A2 * exp(-0.5 * pow((x[0] - sqrt(2) * mu1) / sqrt(2 * sigma1 * sigma1 - sigma0 * sigma0), 2));
+    Double_t term4 = A3 * exp(-0.5 * pow((x[0] - sqrt(3) * mu1) / sqrt(3 * sigma1 * sigma1 - 2 * sigma0 * sigma0), 2));
     return term1 + term2 + term3 + term4;
 }
 
@@ -154,12 +156,14 @@ void makeOutputDir(const string& dirName) {
 
 // SPE calibration function
 void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err) {
+    // Open the ROOT file
     TFile *calibFile = TFile::Open(calibFileName.c_str());
     if (!calibFile || calibFile->IsZombie()) {
         cout << "Error opening calibration file: " << calibFileName << endl;
         exit(1);
     }
 
+    // Access the TTree
     TTree *calib = (TTree*)calibFile->Get("tree");
     if (!calib) {
         cout << "Error accessing tree in calibration file" << endl;
@@ -167,64 +171,174 @@ void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err
         exit(1);
     }
 
-    TH1F *histArea[N_PMTS];
-    Long64_t nLEDFlashes[N_PMTS] = {0};
-    for (int i = 0; i < N_PMTS; i++) {
-        histArea[i] = new TH1F(Form("PMT%d_Area", i + 1),
-                               Form("PMT %d;ADC Counts;Events", i + 1), 150, -50, 400);
-    }
-
-    Int_t triggerBits;
+    // Branch variables
+    Short_t adcVal[23][45];
     Double_t area[23];
-    calib->SetBranchAddress("triggerBits", &triggerBits);
+    Int_t triggerBits;
+    calib->SetBranchAddress("adcVal", adcVal);
     calib->SetBranchAddress("area", area);
+    calib->SetBranchAddress("triggerBits", &triggerBits);
 
     Long64_t nEntries = calib->GetEntries();
     cout << "Processing " << nEntries << " calibration events from " << calibFileName << "..." << endl;
 
-    for (Long64_t entry = 0; entry < nEntries; entry++) {
-        calib->GetEntry(entry);
-        if (triggerBits != 16) continue;
-        for (int pmt = 0; pmt < N_PMTS; pmt++) {
-            histArea[pmt]->Fill(area[PMT_CHANNEL_MAP[pmt]]);
-            nLEDFlashes[pmt]++;
+    // Prepare histograms
+    TH1F *histArea[N_PMTS];
+    Long64_t nLEDFlashes[N_PMTS] = {0};
+    for (int i = 0; i < N_PMTS; i++) {
+        histArea[i] = new TH1F(Form("PMT%d_Area", i + 1),
+                               Form("; Area; Events per 3 ADCs", i + 1),
+                               150, -50, 400);
+        histArea[i]->SetLineColor(kRed);
+        histArea[i]->GetXaxis()->SetLabelFont(42);
+        histArea[i]->GetYaxis()->SetLabelFont(42);
+        histArea[i]->GetXaxis()->SetTitleFont(42);
+        histArea[i]->GetYaxis()->SetTitleFont(42);
+    }
+
+    // Fill histograms
+    for (Long64_t ev = 0; ev < nEntries; ++ev) {
+        calib->GetEntry(ev);
+        if (triggerBits == 16) {
+            for (int p = 0; p < N_PMTS; ++p) {
+                histArea[p]->Fill(area[PMT_CHANNEL_MAP[p]]);
+                nLEDFlashes[p]++;
+            }
         }
     }
 
-    for (int i = 0; i < N_PMTS; i++) {
+    // Draw individual histograms
+    TCanvas *canvas = new TCanvas("canvas", "PMT Energy Distributions", 1200, 800);
+    canvas->SetLeftMargin(0.15);
+    canvas->SetRightMargin(0.05);
+    canvas->SetBottomMargin(0.15);
+    canvas->SetTopMargin(0.05);
+
+    for (int i = 0; i < N_PMTS; ++i) {
         if (histArea[i]->GetEntries() < 1000) {
             cout << "Warning: Insufficient data for PMT " << i + 1 << " in " << calibFileName << endl;
             mu1[i] = 0;
             mu1_err[i] = 0;
-            delete histArea[i];
             continue;
         }
 
-        TF1 *fitFunc = new TF1("fitFunc", SPEfit, -50, 400, 8);
-        Double_t histMean = histArea[i]->GetMean();
-        Double_t histRMS = histArea[i]->GetRMS();
+        canvas->Clear();
+        histArea[i]->GetXaxis()->SetTitleSize(0.05);
+        histArea[i]->GetYaxis()->SetTitleSize(0.05);
+        histArea[i]->GetXaxis()->SetLabelSize(0.04);
+        histArea[i]->GetYaxis()->SetLabelSize(0.04);
 
-        fitFunc->SetParameters(1000, histMean - histRMS, histRMS / 2,
-                              1000, histMean, histRMS,
-                              500, 200);
+        TF1 *f = new TF1("f", SPEfit, -50, 400, 8);
+        f->SetParameters(1000, 0, 10, 1000, 50, 10, 500, 500);
+        f->SetLineColor(kBlue);
+        f->SetParNames("A0", "#mu_{0}", "#sigma_{0}", "A1", "#mu_{1}", "#sigma_{1}", "A2", "A3");
 
-        histArea[i]->Fit(fitFunc, "Q", "", -50, 400);
-
-        mu1[i] = fitFunc->GetParameter(4);
-        Double_t sigma_mu1 = fitFunc->GetParError(4);
-        Double_t sigma1 = fitFunc->GetParameter(5);
-        mu1_err[i] = sqrt(pow(sigma_mu1, 2) + pow(sigma1 / sqrt(nLEDFlashes[i]), 2));
-
-        // Save SPE fit plots
-        TCanvas *c_spe = new TCanvas(Form("c_spe_pmt%d", i), Form("SPE Fit PMT %d", i), 800, 600);
+        histArea[i]->Fit(f, "R");
         histArea[i]->Draw();
-        fitFunc->Draw("SAME");
-        c_spe->SaveAs(Form("%s/SPE_Fit_PMT%d.png", OUTPUT_DIR.c_str(), i + 1));
-        delete c_spe;
-        delete fitFunc;
-        delete histArea[i];
+        f->Draw("same");
+
+        mu1[i] = f->GetParameter(4); // mu1
+        mu1_err[i] = f->GetParError(4); // Error on mu1
+
+        TLatex tex;
+        tex.SetTextFont(42);
+        tex.SetTextSize(0.06);
+        tex.SetTextAlign(22);
+        tex.SetNDC();
+        tex.DrawLatex(0.5, 0.92, Form("PMT %d", i + 1));
+
+        gPad->Update();
+        if (auto stats = (TPaveStats*)histArea[i]->FindObject("stats")) {
+            stats->SetX1NDC(0.65);
+            stats->SetY1NDC(0.65);
+            stats->SetX2NDC(0.95);
+            stats->SetY2NDC(0.95);
+            stats->SetTextFont(42);
+            stats->SetTextSize(0.03);
+            stats->SetOptStat(10);
+            stats->SetOptFit(111);
+            stats->SetName("");
+        }
+
+        canvas->SaveAs(Form("%s/PMT%d_Energy_Distribution.png", OUTPUT_DIR.c_str(), i + 1));
+        delete f;
+    }
+    delete canvas;
+
+    // Create combined plot
+    gStyle->SetTextFont(42);
+    gStyle->SetLabelFont(42, "XYZ");
+    gStyle->SetTitleFont(42, "XYZ");
+    gStyle->SetImageScaling(2.0);
+
+    TCanvas *master = new TCanvas("MasterCanvas", "Combined PMT Energy Distributions", 2400, 1600);
+    master->Divide(3, 4, 0, 0);
+    int layout[4][3] = {
+        {0, 10, 7},
+        {2, 6, 3},
+        {8, 9, 11},
+        {4, 5, 1}
+    };
+
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            int pad = r * 3 + c + 1;
+            master->cd(pad);
+            int idx = layout[r][c];
+
+            histArea[idx]->GetXaxis()->SetTitleSize(0.07);
+            histArea[idx]->GetYaxis()->SetTitleSize(0.09);
+            histArea[idx]->GetXaxis()->SetLabelSize(0.04);
+            histArea[idx]->GetYaxis()->SetLabelSize(0.04);
+            histArea[idx]->GetYaxis()->SetTitle("Events per 3 ADCs");
+            histArea[idx]->GetYaxis()->SetTitleOffset(0.8);
+            histArea[idx]->GetXaxis()->SetTitle("Area");
+
+            gPad->SetLeftMargin(0.15);
+            gPad->SetRightMargin(0.12);
+            gPad->SetBottomMargin(0.15);
+            gPad->SetTopMargin(0.10);
+
+            TF1 *f2 = new TF1("f2", SPEfit, -50, 400, 8);
+            f2->SetParameters(100, 0, 10, 100, 50, 10, 50, 50);
+            f2->SetLineColor(kBlue);
+            f2->SetParNames("A0", "#mu_{0}", "#sigma_{0}", "A1", "#mu_{1}", "#sigma_{1}", "A2", "A3");
+
+            histArea[idx]->Fit(f2, "R");
+            histArea[idx]->Draw();
+            f2->Draw("same");
+
+            TLatex tex2;
+            tex2.SetTextFont(42);
+            tex2.SetTextSize(0.14);
+            tex2.SetTextAlign(22);
+            tex2.SetNDC();
+            tex2.DrawLatex(0.5, 0.92, Form("PMT %d", idx + 1));
+
+            gPad->Update();
+            if (auto s2 = (TPaveStats*)histArea[idx]->FindObject("stats")) {
+                s2->SetX1NDC(0.65);
+                s2->SetY1NDC(0.65);
+                s2->SetX2NDC(0.95);
+                s2->SetY2NDC(0.95);
+                s2->SetTextFont(42);
+                s2->SetTextSize(0.03);
+                s2->SetOptStat(10);
+                s2->SetOptFit(111);
+                s2->SetName("");
+            }
+
+            delete f2;
+        }
     }
 
+    master->SaveAs(Form("%s/Combined_PMT_Energy_Distributions.pdf", OUTPUT_DIR.c_str()));
+    master->SaveAs(Form("%s/Combined_PMT_Energy_Distributions.png", OUTPUT_DIR.c_str()));
+    gStyle->SetImageScaling(1.0);
+
+    // Cleanup
+    for (int i = 0; i < N_PMTS; ++i) delete histArea[i];
+    delete master;
     calibFile->Close();
 }
 
@@ -490,12 +604,10 @@ int main(int argc, char *argv[]) {
                 }
 
                 // Store energy for SiPM panels (ADC)
-                if (iChan >= 12 && iChan <= 19) {
-                    side_sipm_energy.push_back(allPulseEnergy);
+                if (iChan >= 12 && iChan <= 21) {
                     sipm_energies[iChan - 12] = allPulseEnergy;
-                } else if (iChan >= 20 && iChan <= 21) {
-                    top_sipm_energy.push_back(allPulseEnergy);
-                    sipm_energies[iChan - 12] = allPulseEnergy;
+                    if (iChan <= 19) side_sipm_energy.push_back(allPulseEnergy);
+                    else top_sipm_energy.push_back(allPulseEnergy);
                 }
 
                 // Check for pulses at waveform end
@@ -524,16 +636,13 @@ int main(int argc, char *argv[]) {
             }
             p.single = (variance(chan_starts_no_outliers) < 5 * 16.0 / 1000.0);
 
-            // Muon detection
+            // Muon depot
             bool sipm_hit = false;
             for (size_t i = 0; i < SIDE_SIPM_THRESHOLDS.size(); i++) {
                 if (sipm_energies[i] > SIDE_SIPM_THRESHOLDS[i]) {
                     sipm_hit = true;
                     break;
                 }
-            }
-            if (!sipm_hit && (sipm_energies[8] > TOP_SIPM_THRESHOLD || sipm_energies[9] > TOP_SIPM_THRESHOLD)) {
-                sipm_hit = true;
             }
 
             if ((p.energy > MUON_ENERGY_THRESHOLD && sipm_hit) ||
@@ -552,9 +661,6 @@ int main(int argc, char *argv[]) {
                     sipm_low = false;
                     break;
                 }
-            }
-            if (sipm_energies[8] > TOP_SIPM_THRESHOLD || sipm_energies[9] > TOP_SIPM_THRESHOLD) {
-                sipm_low = false;
             }
 
             bool is_michel_candidate = p.energy >= MICHEL_ENERGY_MIN &&
