@@ -71,6 +71,7 @@ struct myPulse {
     bool is_muon;          // Muon candidate flag
     bool is_michel;        // Michel electron candidate flag
     bool is_nue;           // νₑ candidate flag
+    std::vector<double> pmt_energies; // Per-PMT energies (p.e.)
 };
 
 // Temporary pulse structure
@@ -409,6 +410,17 @@ int main(int argc, char *argv[]) {
     TH1D* h_after_veto_trigger2 = new TH1D("after_veto_trigger2", "After Veto (Trigger 2);Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_sipm_cosmic = new TH1D("sipm_cosmic", "SiPM Energy for Cosmic Events;SiPM Energy (ADC);Events", 100, 0, 500);
     TH1D* h_sipm_tagged = new TH1D("sipm_tagged", "SiPM Energy for Tagged Events;SiPM Energy (ADC);Events", 100, 0, 500);
+    // New histograms for per-PMT energy distributions
+    TH1D* h_pmt_energy_all_pmt[N_PMTS];
+    TH1D* h_pmt_energy_veto_pass_pmt[N_PMTS];
+    for (int i = 0; i < N_PMTS; ++i) {
+        h_pmt_energy_all_pmt[i] = new TH1D(Form("pmt_energy_all_pmt%d", i + 1),
+                                           Form("PMT %d Energy for All Events;Energy (p.e.);Events", i + 1),
+                                           100, 0, 1500);
+        h_pmt_energy_veto_pass_pmt[i] = new TH1D(Form("pmt_energy_veto_pass_pmt%d", i + 1),
+                                                Form("PMT %d Energy for Veto-Passing Events;Energy (p.e.);Events", i + 1),
+                                                100, 0, 1500);
+    }
 
     for (const auto& inputFileName : inputFiles) {
         TFile *f = TFile::Open(inputFileName.c_str());
@@ -486,6 +498,7 @@ int main(int argc, char *argv[]) {
             p.is_muon = false;
             p.is_michel = false;
             p.is_nue = false;
+            p.pmt_energies = std::vector<double>(N_PMTS, 0.0); // Initialize per-PMT energies
             std::vector<double> all_chan_start, all_chan_end, all_chan_peak, all_chan_energy;
             std::vector<double> side_sipm_energy, top_sipm_energy;
             std::vector<double> chan_starts_no_outliers;
@@ -544,6 +557,13 @@ int main(int argc, char *argv[]) {
                                 all_chan_peak.push_back(pt.peak);
                                 all_chan_energy.push_back(pt.energy);
                                 if (pt.energy > 1) p.number += 1;
+                                // Store per-PMT energy
+                                for (int pmt = 0; pmt < N_PMTS; ++pmt) {
+                                    if (PMT_CHANNEL_MAP[pmt] == iChan) {
+                                        p.pmt_energies[pmt] = pt.energy;
+                                        break;
+                                    }
+                                }
                             }
                             pulses_temp.push_back(pt);
                             peak = 0;
@@ -588,8 +608,7 @@ int main(int argc, char *argv[]) {
                 no_event61 = false;
             }
             // Muon condition
-            bool is_muon_event = (p.energy > MUON_ENERGY_THRESHOLD && is_sipm_hit_muon(sipm_energies)) ||
-                                 (pulse_at_end && p.energy > MUON_ENERGY_THRESHOLD / 2 && is_sipm_hit_muon(sipm_energies));
+            bool is_muon_event = p.energy > MUON_ENERGY_THRESHOLD && is_sipm_hit_muon(sipm_energies);
             if (is_muon_event) {
                 p.is_muon = true;
                 last_muon_time = p.start;
@@ -648,8 +667,13 @@ int main(int argc, char *argv[]) {
             bool is_valid_trigger = !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
             if (is_valid_trigger) {
                 h_pmt_energy_all->Fill(p.energy);
+                for (int pmt = 0; pmt < N_PMTS; ++pmt) {
+                    if (p.pmt_energies[pmt] > 0) {
+                        h_pmt_energy_all_pmt[pmt]->Fill(p.pmt_energies[pmt]);
+                    }
+                }
             }
-            // Cosmic condition (updated to 500 ADC)
+            // Cosmic condition
             bool is_cosmic_event = (p.is_muon || p.is_michel || is_sipm_hit_cosmic(sipm_energies, 500.0)) && p.energy > 1;
             if (is_cosmic_event) {
                 h_pmt_energy_cosmic->Fill(p.energy);
@@ -674,11 +698,16 @@ int main(int argc, char *argv[]) {
             }
             // Veto-passing condition
             bool is_veto_passing_event = !p.is_muon && !p.is_michel && is_sipm_low(sipm_energies) &&
-                                         p.number >= 1 && p.energy > 1 && p.trigger == 2 && p.beam;
+                                         p.number >= 1 && p.energy > 1 && p.trigger == 2;
             if (is_veto_passing_event) {
                 h_pmt_energy_veto_pass->Fill(p.energy);
                 h_sipm_veto_pass->Fill(p.all_sipm_energy);
                 h_after_veto_trigger2->Fill(p.energy);
+                for (int pmt = 0; pmt < N_PMTS; ++pmt) {
+                    if (p.pmt_energies[pmt] > 0) {
+                        h_pmt_energy_veto_pass_pmt[pmt]->Fill(p.pmt_energies[pmt]);
+                    }
+                }
                 num_veto_pass++;
             }
             // Time to muon condition
@@ -825,7 +854,7 @@ int main(int argc, char *argv[]) {
     c->Update();
     c->Modified();
     c->RedrawAxis();
- plotName = OUTPUT_DIR + "/Michel_dt.png";
+    plotName = OUTPUT_DIR + "/Michel_dt.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
     c->Clear();
@@ -956,9 +985,35 @@ int main(int argc, char *argv[]) {
     plotName = OUTPUT_DIR + "/PMT_Energy_Categories.png";
     c_pmt_categories->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
+    // New: Overlaid plots for each PMT
+    TCanvas* c_pmt_individual = new TCanvas("c_pmt_individual", "PMT Individual Energy", 1200, 800);
+    for (int pmt = 0; pmt < N_PMTS; ++pmt) {
+        c_pmt_individual->Clear();
+        h_pmt_energy_all_pmt[pmt]->SetLineColor(kRed);
+        h_pmt_energy_veto_pass_pmt[pmt]->SetLineColor(kBlue);
+        h_pmt_energy_all_pmt[pmt]->SetLineWidth(2);
+        h_pmt_energy_veto_pass_pmt[pmt]->SetLineWidth(2);
+        h_pmt_energy_all_pmt[pmt]->SetTitle(Form("PMT %d Energy All vs Veto-Passing;Energy (p.e.);Events", pmt + 1));
+        double max_pmt = std::max(h_pmt_energy_all_pmt[pmt]->GetMaximum(), h_pmt_energy_veto_pass_pmt[pmt]->GetMaximum());
+        h_pmt_energy_all_pmt[pmt]->SetMaximum(max_pmt * 1.2);
+        h_pmt_energy_all_pmt[pmt]->SetMinimum(0.1);
+        h_pmt_energy_all_pmt[pmt]->Draw();
+        h_pmt_energy_veto_pass_pmt[pmt]->Draw("SAME");
+        gPad->SetLogy(1);
+        TLegend* leg_pmt = new TLegend(0.15, 0.7, 0.35, 0.9);
+        leg_pmt->AddEntry(h_pmt_energy_all_pmt[pmt], "All Events", "l");
+        leg_pmt->AddEntry(h_pmt_energy_veto_pass_pmt[pmt], "Veto-Passing Events", "l");
+        leg_pmt->Draw();
+        c_pmt_individual->Update();
+        plotName = Form("%s/PMT%d_Energy_All_vs_VetoPass.png", OUTPUT_DIR.c_str(), pmt + 1);
+        c_pmt_individual->SaveAs(plotName.c_str());
+        cout << "Saved plot: " << plotName << endl;
+        delete leg_pmt;
+    }
     delete c;
     delete c_pmt_veto;
     delete c_pmt_categories;
+    delete c_pmt_individual;
     delete hMyMuonEnergy;
     delete hMyMichelEnergy;
     delete hMyDtMichel;
@@ -983,5 +1038,9 @@ int main(int argc, char *argv[]) {
     delete h_after_veto_trigger2;
     delete h_sipm_cosmic;
     delete h_sipm_tagged;
+    for (int i = 0; i < N_PMTS; ++i) {
+        delete h_pmt_energy_all_pmt[i];
+        delete h_pmt_energy_veto_pass_pmt[i];
+    }
     return 0;
 }
