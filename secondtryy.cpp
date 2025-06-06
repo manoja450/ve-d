@@ -1,3 +1,4 @@
+
 #include <TFile.h>
 #include <TTree.h>
 #include <TBranch.h>
@@ -14,7 +15,7 @@
 #include <TROOT.h>
 #include <iostream>
 #include <fstream>
-#include <vector>
+#include <vector
 #include <numeric>
 #include <algorithm>
 #include <string>
@@ -33,26 +34,36 @@ const int N_PMTS = 12;
 const int PMT_CHANNEL_MAP[12] = {0, 10, 7, 2, 6, 3, 8, 9, 11, 4, 5, 1};
 const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
+const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
+const int ADCSIZE = 45;                 // Number of ADC samples per waveform
+const std::string OUTPUT_DIR = "output"; // Output directory
+const double FIT_MIN = 1.0; // Fit range min (µs)
+const double FIT_MAX = 10.0; // Fit range max (µs)
+
+// Event selection thresholds
 const double MUON_ENERGY_THRESHOLD = 50; // Min PMT energy for muon (p.e.)
+const std::vector<double> SIDE_SIPM_THRESHOLDS = {750, 950, 1200, 1375, 525, 700, 700, 500}; // Channels 12-19 (ADC)
+const double TOP_SIPM_THRESHOLD = 450; // Channels 20-21 (ADC)
+
 const double MICHEL_ENERGY_MIN = 40;    // Min PMT energy for Michel (p.e.)
 const double MICHEL_ENERGY_MAX = 1000;  // Max PMT energy for Michel (p.e.)
 const double MICHEL_ENERGY_MAX_DT = 400; // Max PMT energy for dt plots (p.e.)
 const double MICHEL_DT_MIN = 0.8;       // Min time after muon for Michel (µs)
 const double MICHEL_DT_MAX = 16.0;      // Max time after muon for Michel (µs)
-const int ADCSIZE = 45;                 // Number of ADC samples per waveform
+const int MICHEL_PMT_MIN = 8;           // Min PMT hits for Michel
+
 const double NUE_ENERGY_MIN = 352;      // Min PMT energy for νₑ (p.e.)
 const double NUE_ENERGY_MAX = 1088;     // Max PMT energy for νₑ (p.e.)
 const double NUE_VETO_THRESHOLD = 80;   // Max SiPM sum for νₑ (ADC)
 const int NUE_PMT_MIN = 4;              // Min PMT hits for νₑ
 const double NUE_DT_MIN = 1.0;          // Min time after beam for νₑ (µs)
 const double NUE_DT_MAX = 10.0;         // Max time after beam for νₑ (µs)
-const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
-const double SIPM_MIN_THRESHOLD = 150;  // Min SiPM energy for non-cosmic events (ADC)
-const std::string OUTPUT_DIR = "output"; // Fixed output directory
-const std::vector<double> SIDE_SIPM_THRESHOLDS = {750, 950, 1200, 1375, 525, 700, 700, 500}; // Channels 12-19
-const double TOP_SIPM_THRESHOLD = 450; // Channels 20-21 (ADC)
-const double FIT_MIN = 1.0; // Fit range min (µs)
-const double FIT_MAX = 10.0; // Fit range max (µs)
+
+const double COSMIC_SIPM_THRESHOLD = 500.0; // SiPM threshold for cosmic events (ADC)
+const double UNTAGGED_SIPM_THRESHOLD = 150.0; // SiPM threshold for untagged events (ADC)
+const double UNTAGGED_ENERGY_MAX = 25;  // Max PMT energy for untagged (p.e.)
+const int UNTAGGED_PMT_MIN = 1;         // Min PMT hits for untagged
+const int UNTAGGED_PMT_MAX = 7;         // Max PMT hits for untagged
 
 // Pulse structure
 struct myPulse {
@@ -67,7 +78,7 @@ struct myPulse {
     double side_sipm_energy; // Side SiPM energy (ADC)
     double top_sipm_energy;  // Top SiPM energy (ADC)
     double all_sipm_energy;  // All SiPM energy (ADC)
-    double last_muon_t;    // Time of last muon (µs)
+    double last_mu;        // Time of last muon (µs)
     bool is_muon;          // Muon candidate flag
     bool is_michel;        // Michel electron candidate flag
     bool is_nue;           // νₑ candidate flag
@@ -147,25 +158,7 @@ void makeOutputDir(const string& dirName) {
     }
 }
 
-// Helper functions for event conditions
-bool is_sipm_hit(const std::vector<double>& sipm_energies, double threshold = SIPM_MIN_THRESHOLD) {
-    for (size_t i = 0; i < sipm_energies.size(); i++) {
-        if (sipm_energies[i] > threshold) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool is_sipm_hit_cosmic(const std::vector<double>& sipm_energies, double cosmic_threshold = 500.0) {
-    for (size_t i = 0; i < sipm_energies.size(); i++) {
-        if (sipm_energies[i] > cosmic_threshold) {
-            return true;
-        }
-    }
-    return false;
-}
-
+// Selection criteria functions
 bool is_sipm_hit_muon(const std::vector<double>& sipm_energies) {
     for (size_t i = 0; i < SIDE_SIPM_THRESHOLDS.size(); i++) {
         if (sipm_energies[i] > SIDE_SIPM_THRESHOLDS[i]) {
@@ -182,6 +175,76 @@ bool is_sipm_low(const std::vector<double>& sipm_energies) {
         }
     }
     return !(sipm_energies[8] > TOP_SIPM_THRESHOLD || sipm_energies[9] > TOP_SIPM_THRESHOLD);
+}
+
+bool is_sipm_hit_cosmic(const std::vector<double>& sipm_energies) {
+    for (size_t i = 0; i < sipm_energies.size(); i++) {
+        if (sipm_energies[i] > COSMIC_SIPM_THRESHOLD) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_sipm_hit_untagged(const std::vector<double>& sipm_energies) {
+    for (size_t i = 0; i < sipm_energies.size(); i++) {
+        if (sipm_energies[i] > UNTAGGED_SIPM_THRESHOLD) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_muon_event(const myPulse& p, const std::vector<double>& sipm_energies) {
+    return p.energy > MUON_ENERGY_THRESHOLD && is_sipm_hit_muon(sipm_energies);
+}
+
+bool is_michel_event(const myPulse& p, const std::vector<double>& sipm_energies, double dt) {
+    return p.energy >= MICHEL_ENERGY_MIN &&
+           p.energy <= MICHEL_ENERGY_MAX &&
+           dt >= MICHEL_DT_MIN &&
+           dt <= MICHEL_DT_MAX &&
+           p.number >= MICHEL_PMT_MIN &&
+           is_sipm_low(sipm_energies) &&
+           !(p.trigger == 1 || p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
+}
+
+bool is_nue_event(const myPulse& p, double beam_dt) {
+    return p.energy >= NUE_ENERGY_MIN &&
+           p.energy <= NUE_ENERGY_MAX &&
+           beam_dt >= NUE_DT_MIN &&
+           beam_dt <= NUE_DT_MAX &&
+           p.number >= NUE_PMT_MIN &&
+           p.all_sipm_energy < NUE_VETO_THRESHOLD &&
+           !p.is_muon &&
+           !p.is_michel;
+}
+
+bool is_cosmic_event(const myPulse& p, const std::vector<double>& sipm_energies) {
+    return (p.is_muon || p.is_michel || is_sipm_hit_cosmic(sipm_energies)) && p.energy > 1;
+}
+
+bool is_tagged_event(const myPulse& p, const std::vector<double>& sipm_energies) {
+    return (is_sipm_hit_cosmic(sipm_energies) || p.is_muon || p.is_michel) && p.energy > 1;
+}
+
+bool is_untagged_event(const myPulse& p, const std::vector<double>& sipm_energies, double beam_dt, bool pulse_at_end) {
+    bool is_non_muon_low_energy = p.energy <= UNTAGGED_ENERGY_MAX && !pulse_at_end && !is_sipm_hit_untagged(sipm_energies);
+    return p.trigger == 2 &&
+           !is_sipm_hit_untagged(sipm_energies) &&
+           p.number >= UNTAGGED_PMT_MIN &&
+           p.number <= UNTAGGED_PMT_MAX &&
+           is_non_muon_low_energy &&
+           !p.beam;
+}
+
+bool is_veto_passing_event(const myPulse& p, const std::vector<double>& sipm_energies) {
+    return !p.is_muon &&
+           !p.is_michel &&
+           is_sipm_low(sipm_energies) &&
+           p.number >= 1 &&
+           p.energy > 1 &&
+           p.trigger == 2;
 }
 
 // SPE calibration function
@@ -232,7 +295,7 @@ void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err
     canvas->SetRightMargin(0.05);
     canvas->SetBottomMargin(0.15);
     canvas->SetTopMargin(0.05);
-    for (int i = 0; i < N_PMTS; ++i) {
+    for (int i = 0; i < N_PMTS; i++) {
         if (histArea[i]->GetEntries() < 1000) {
             cout << "Warning: Insufficient data for PMT " << i + 1 << " in " << calibFileName << endl;
             mu1[i] = 0;
@@ -378,39 +441,41 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < N_PMTS; i++) {
         cout << "PMT " << i + 1 << ": mu1 = " << mu1[i] << " ± " << mu1_err[i] << " ADC counts/p.e.\n";
     }
+    int num_events = 0;
     int num_muons = 0;
     int num_michels = 0;
     int num_nue = 0;
-    int num_events = 0;
-    int num_untagged = 0;
-    int num_veto_pass = 0;
+    int total_num_untagged = 0;
+    int total_num_veto_pass = 0;
+    int cosmic_veto_pass = 0, cosmic_veto_fail = 0;
+    int tagged_veto_pass = 0, tagged_veto_fail = 0;
+    int untagged_veto_pass = 0;
     std::map<int, int> trigger_counts;
     std::vector<double> beam_pulse_times;
-    TH1D* hMyMuonEnergy = new TH1D("muon_energy", "Muon Energy Spectrum for Michel Muons;Energy (p.e.);Counts/100 p.e.", 550, -500, 5000);
-    TH1D* hMyMichelEnergy = new TH1D("michel_energy", "Michel Electron Energy Distribution;Energy (p.e.);Counts/4 p.e.", 200, 0, 800);
-    TH1D* hMyDtMichel = new TH1D("DeltaT", "Muon-Michel Time Difference;Time to Previous Muon (#mus);Counts/0.1 #mus", 160, 0, MICHEL_DT_MAX);
+    TH1D* hMyMuonEnergy = new TH1D("muon_energy", "Muon Energy Spectrum;Energy (p.e.);Counts/100 p.e.", 550, -500, 5000);
+    TH1D* hMyMichelEnergy = new TH1D("michel_energy", "Michel Electron Energy;Energy (p.e.);Counts/4 p.e.", 200, 0, 800);
+    TH1D* hMyDtMichel = new TH1D("DeltaT", "Muon-Michel Time Difference;Time (#mus);Counts/0.1 #mus", 160, 0, MICHEL_DT_MAX);
     TH2D* hMyEnergyVsDt = new TH2D("energy_vs_dt", "Michel Energy vs Time Difference;dt (#mus);Energy (p.e.)", 160, 0, MICHEL_DT_MAX, 100, 0, 1000);
     TH1D* hMyTriggerBits = new TH1D("trigger_bits", "Trigger Bits Distribution;Trigger Bits;Counts", 36, 0, 36);
     TH1D* hMyNueEnergy = new TH1D("nue_energy", "νₑ Energy Distribution;Energy (p.e.);Counts/10 p.e.", 150, 0, 1500);
-    TH1D* hMyNueDt = new TH1D("nue_dt", "νₑ Time Difference;Time to Beam (#mus);Counts/0.1 #mus", 120, 0, 12);
+    TH1D* hMyNueDt = new TH1D("nue_dt", "νₑ Time Difference;Time to Beam (#mus);Counts/Events", 120, 0, 12);
     TH1D* hMyNuePmtHits = new TH1D("nue_pmt_hits", "νₑ PMT Hits;Number of PMTs;Counts", 12, 0, 12);
     TH2D* hMyNueEnergyVsDt = new TH2D("nue_energy_vs_dt", "νₑ Energy vs Time Difference;dt (#mus);Energy (p.e.)", 120, 0, 12, 150, 0, 1500);
     TH1D* hMyNueBkgEnergy = new TH1D("nue_bkg_energy", "νₑ Background Energy;Energy (p.e.);Counts/10 p.e.", 150, 0, 1500);
     TH1D* h_pmt_energy_all = new TH1D("pmt_energy_all", "PMT Energy for All Events;Energy (p.e.);Events", 100, 0, 1500);
-    TH1D* h_pmt_energy_without_veto = new TH1D("pmt_energy_without_veto", "PMT Energy After Veto;Energy (p.e.);Events", 100, 0, 1500);
+    TH1D* h_pmt_energy_after_veto = new TH1D("pmt_energy_after_veto", "PMT Energy After Veto;Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_pmt_energy_cosmic = new TH1D("pmt_energy_cosmic", "PMT Energy for Cosmic Events;Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_pmt_energy_untagged = new TH1D("pmt_energy_untagged", "PMT Energy for Untagged Events;Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_pmt_energy_tagged = new TH1D("pmt_energy_tagged", "PMT Energy for Tagged Events;Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_pmt_energy_veto_pass = new TH1D("pmt_energy_veto_pass", "PMT Energy for Veto-Passing Events;Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_sipm_untagged = new TH1D("sipm_untagged", "SiPM Energy for Untagged Events;SiPM Energy (ADC);Events", 100, 0, 200);
     TH1D* h_pmt_hits_untagged = new TH1D("pmt_hits_untagged", "PMT Hits for Untagged Events;Number of PMTs;Events", 12, 0, 12);
-    TH1D* h_dt_untagged = new TH1D("dt_untagged", "Time to Beam for Untagged Events;dt (µs);Events", 120, 0, 12);
-    TH1D* h_sipm_veto_pass = new TH1D("sipm_veto_pass", "SiPM Energy for Veto-Passing Events;SiPM Energy (ADC);Events", 100, 0, 200);
-    TH1D* h_dt_all = new TH1D("dt_all", "Time to Last Muon;dt (µs);Events", 160, 0, 16);
+    TH1D* h_dt_untagged = new TH1D("dt_untagged", "Time to Beam for Untagged Events;dt (#mus);Events", 120, 0, 12);
+    TH1D* h_sipm_veto_pass = new TH1D("sipm_veto_pass", "SiPM Energy for Veto-Passing;SiPM Energy (ADC);Events", 100, 0, 100);
+    TH1D* h_dt_all = new TH1D("dt_all", "Time to Last Muon;dt (#mus);Events", 160, 0, 16);
     TH1D* h_after_veto_trigger2 = new TH1D("after_veto_trigger2", "After Veto (Trigger 2);Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_sipm_cosmic = new TH1D("sipm_cosmic", "SiPM Energy for Cosmic Events;SiPM Energy (ADC);Events", 100, 0, 500);
     TH1D* h_sipm_tagged = new TH1D("sipm_tagged", "SiPM Energy for Tagged Events;SiPM Energy (ADC);Events", 100, 0, 500);
-    // New histograms for per-PMT energy distributions
     TH1D* h_pmt_energy_all_pmt[N_PMTS];
     TH1D* h_pmt_energy_veto_pass_pmt[N_PMTS];
     for (int i = 0; i < N_PMTS; ++i) {
@@ -454,7 +519,7 @@ int main(int argc, char *argv[]) {
         t->SetBranchAddress("pulseH", pulseH);
         t->SetBranchAddress("peakPosition", peakPosition);
         t->SetBranchAddress("area", area);
-        t->SetBranchAddress("nsTime", &nsTime);
+        t->SetBranchAddress("nsTime", &nsTime); // Fixed: Pass address of nsTime
         t->SetBranchAddress("triggerBits", &triggerBits);
         int numEntries = t->GetEntries();
         cout << "Collecting beam pulses from " << numEntries << " entries in " << inputFileName << endl;
@@ -480,7 +545,7 @@ int main(int argc, char *argv[]) {
             hMyTriggerBits->Fill(triggerBits);
             trigger_counts[triggerBits]++;
             if (triggerBits < 0 || triggerBits > 36) {
-                cout << "Warning: triggerBits = " << triggerBits << " out of histogram range (0–36) in file " << inputFileName << ", event " << eventID << endl;
+                cout << "Warning: triggerBits = " << triggerBits << " out of histogram range (0-36) in file " << inputFileName << ", event " << eventID << endl;
             }
             struct myPulse p;
             p.start = nsTime / 1000.0;
@@ -494,11 +559,11 @@ int main(int argc, char *argv[]) {
             p.side_sipm_energy = 0;
             p.top_sipm_energy = 0;
             p.all_sipm_energy = 0;
-            p.last_muon_t = last_muon_time;
+            p.last_mu = last_muon_time;
             p.is_muon = false;
             p.is_michel = false;
             p.is_nue = false;
-            p.pmt_energies = std::vector<double>(N_PMTS, 0.0); // Initialize per-PMT energies
+            p.pmt_energies = std::vector<double>(N_PMTS, 0.0);
             std::vector<double> all_chan_start, all_chan_end, all_chan_peak, all_chan_energy;
             std::vector<double> side_sipm_energy, top_sipm_energy;
             std::vector<double> chan_starts_no_outliers;
@@ -557,7 +622,6 @@ int main(int argc, char *argv[]) {
                                 all_chan_peak.push_back(pt.peak);
                                 all_chan_energy.push_back(pt.energy);
                                 if (pt.energy > 1) p.number += 1;
-                                // Store per-PMT energy
                                 for (int pmt = 0; pmt < N_PMTS; ++pmt) {
                                     if (PMT_CHANNEL_MAP[pmt] == iChan) {
                                         p.pmt_energies[pmt] = pt.energy;
@@ -607,23 +671,16 @@ int main(int argc, char *argv[]) {
             if (evbf_energy > EVBF_THRESHOLD) {
                 no_event61 = false;
             }
-            // Muon condition
-            bool is_muon_event = p.energy > MUON_ENERGY_THRESHOLD && is_sipm_hit_muon(sipm_energies);
-            if (is_muon_event) {
+            // Muon selection
+            if (is_muon_event(p, sipm_energies)) {
                 p.is_muon = true;
                 last_muon_time = p.start;
                 num_muons++;
                 muon_candidates.emplace_back(p.start, p.energy);
             }
-            // Michel condition
-            bool is_michel_candidate = p.energy >= MICHEL_ENERGY_MIN &&
-                                      p.energy <= MICHEL_ENERGY_MAX &&
-                                      dt >= MICHEL_DT_MIN &&
-                                      dt <= MICHEL_DT_MAX &&
-                                      p.number >= 8 &&
-                                      is_sipm_low(sipm_energies) &&
-                                      !(p.trigger == 1 || p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
-            bool is_michel_for_dt = is_michel_candidate && p.energy <= MICHEL_ENERGY_MAX;
+            // Michel selection
+            bool is_michel_candidate = is_michel_event(p, sipm_energies, dt);
+            bool is_michel_for_dt = is_michel_candidate && p.energy <= MICHEL_ENERGY_MAX_DT;
             if (is_michel_candidate) {
                 p.is_michel = true;
                 num_michels++;
@@ -634,7 +691,7 @@ int main(int argc, char *argv[]) {
                 hMyDtMichel->Fill(dt);
                 hMyEnergyVsDt->Fill(dt, p.energy);
             }
-            // νₑ condition
+            // νₑ selection
             double beam_dt = 1e9;
             bool is_beam_triggered = p.trigger & (1 | 2 | 3);
             if (is_beam_triggered) {
@@ -644,15 +701,7 @@ int main(int argc, char *argv[]) {
                         beam_dt = dt_beam;
                     }
                 }
-                bool is_nue_candidate = p.energy >= NUE_ENERGY_MIN &&
-                                       p.energy <= NUE_ENERGY_MAX &&
-                                       beam_dt >= NUE_DT_MIN &&
-                                       beam_dt <= NUE_DT_MAX &&
-                                       p.number >= NUE_PMT_MIN &&
-                                       p.all_sipm_energy < NUE_VETO_THRESHOLD &&
-                                       !p.is_muon &&
-                                       !p.is_michel;
-                if (is_nue_candidate) {
+                if (is_nue_event(p, beam_dt)) {
                     p.is_nue = true;
                     num_nue++;
                     hMyNueEnergy->Fill(p.energy);
@@ -663,7 +712,7 @@ int main(int argc, char *argv[]) {
                     hMyNueBkgEnergy->Fill(p.energy);
                 }
             }
-            // All events condition
+            // All events
             bool is_valid_trigger = !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
             if (is_valid_trigger) {
                 h_pmt_energy_all->Fill(p.energy);
@@ -673,34 +722,33 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-            // Cosmic condition
-            bool is_cosmic_event = (p.is_muon || p.is_michel || is_sipm_hit_cosmic(sipm_energies, 500.0)) && p.energy > 1;
-            if (is_cosmic_event) {
+            // Cosmic selection
+            if (is_cosmic_event(p, sipm_energies)) {
                 h_pmt_energy_cosmic->Fill(p.energy);
                 h_sipm_cosmic->Fill(p.all_sipm_energy);
+                if (is_veto_passing_event(p, sipm_energies)) cosmic_veto_pass++;
+                else cosmic_veto_fail++;
             }
-            // Tagged condition
-            bool is_tagged_event = (is_sipm_hit(sipm_energies, 150.0) || p.is_muon || p.is_michel) && p.energy > 1;
-            if (is_tagged_event) {
+            // Tagged selection
+            if (is_tagged_event(p, sipm_energies)) {
                 h_pmt_energy_tagged->Fill(p.energy);
                 h_sipm_tagged->Fill(p.all_sipm_energy);
+                if (is_veto_passing_event(p, sipm_energies)) tagged_veto_pass++;
+                else tagged_veto_fail++;
             }
-            // Untagged condition
-            bool is_non_muon_low_energy = p.energy <= 25 && !pulse_at_end && !is_sipm_hit(sipm_energies, 150.0);
-            bool is_untagged_event = p.trigger == 2 && !is_sipm_hit(sipm_energies, 150.0) && p.number >= 1 && p.number < 8 &&
-                                     is_non_muon_low_energy && !p.beam;
-            if (is_untagged_event) {
+            // Untagged selection
+            if (is_untagged_event(p, sipm_energies, beam_dt, pulse_at_end)) {
                 h_pmt_energy_untagged->Fill(p.energy);
                 h_sipm_untagged->Fill(p.all_sipm_energy);
                 h_pmt_hits_untagged->Fill(p.number);
                 h_dt_untagged->Fill(beam_dt);
-                num_untagged++;
+                total_num_untagged++;
+                if (is_veto_passing_event(p, sipm_energies)) untagged_veto_pass++;
             }
-            // Veto-passing condition
-            bool is_veto_passing_event = !p.is_muon && !p.is_michel && is_sipm_low(sipm_energies) &&
-                                         p.number >= 1 && p.energy > 1 && p.trigger == 2;
-            if (is_veto_passing_event) {
+            // Veto-passing selection
+            if (is_veto_passing_event(p, sipm_energies)) {
                 h_pmt_energy_veto_pass->Fill(p.energy);
+                h_pmt_energy_after_veto->Fill(p.energy);
                 h_sipm_veto_pass->Fill(p.all_sipm_energy);
                 h_after_veto_trigger2->Fill(p.energy);
                 for (int pmt = 0; pmt < N_PMTS; ++pmt) {
@@ -708,13 +756,13 @@ int main(int argc, char *argv[]) {
                         h_pmt_energy_veto_pass_pmt[pmt]->Fill(p.pmt_energies[pmt]);
                     }
                 }
-                num_veto_pass++;
+                total_num_veto_pass++;
             }
-            // Time to muon condition
+            // Time to muon
             if (p.start > last_muon_time) {
                 h_dt_all->Fill(p.start - last_muon_time);
             }
-            p.last_muon_t = last_muon_time;
+            p.last_mu = last_muon_time;
         }
         for (const auto& muon : muon_candidates) {
             if (michel_muon_times.find(muon.first) != michel_muon_times.end()) {
@@ -726,8 +774,8 @@ int main(int argc, char *argv[]) {
         cout << "Muons Detected: " << num_muons << "\n";
         cout << "Michel Electrons Detected: " << num_michels << "\n";
         cout << "νₑ Events Detected: " << num_nue << "\n";
-        cout << "Untagged Events: " << num_untagged << "\n";
-        cout << "Veto-Passing Events: " << num_veto_pass << "\n";
+        cout << "Untagged Events: " << total_num_untagged << "\n";
+        cout << "Veto-Passing Events: " << total_num_veto_pass << "\n";
         cout << "------------------------\n";
         f->Close();
         delete f;
@@ -735,13 +783,16 @@ int main(int argc, char *argv[]) {
         num_muons = 0;
         num_michels = 0;
         num_nue = 0;
-        num_untagged = 0;
-        num_veto_pass = 0;
     }
     cout << "Trigger Bits Distribution (all files):\n";
     for (const auto& pair : trigger_counts) {
         cout << "Trigger " << pair.first << ": " << pair.second << " events\n";
     }
+    cout << "------------------------\n";
+    cout << "Veto Efficiency Analysis:\n";
+    cout << "Cosmic Rejection Efficiency: " << (cosmic_veto_fail / (double)(cosmic_veto_pass + cosmic_veto_fail)) << " (" << cosmic_veto_fail << "/" << (cosmic_veto_pass + cosmic_veto_fail) << ")\n";
+    cout << "Tagged Rejection Efficiency: " << (tagged_veto_fail / (double)(tagged_veto_pass + tagged_veto_fail)) << " (" << tagged_veto_fail << "/" << (tagged_veto_pass + tagged_veto_fail) << ")\n";
+    cout << "Untagged Retention Efficiency: " << (untagged_veto_pass / (double)total_num_untagged) << " (" << untagged_veto_pass << "/" << total_num_untagged << ")\n";
     cout << "------------------------\n";
     TCanvas *c = new TCanvas("c", "Analysis Plots", 1200, 800);
     gStyle->SetOptStat(1111);
@@ -784,7 +835,7 @@ int main(int argc, char *argv[]) {
         } else {
             C_init = 0.1;
         }
-        TF1* expFit = new TF1("expFit", ExpFit, FIT_MIN, FIT_MAX, 3);
+        TF1 *expFit = new TF1("expFit", ExpFit, FIT_MIN, FIT_MAX, 3);
         expFit->SetParameters(N0_init, 2.2, C_init);
         expFit->SetParLimits(0, 0, N0_init * 100);
         expFit->SetParLimits(1, 0.1, 20.0);
@@ -928,19 +979,19 @@ int main(int argc, char *argv[]) {
     cout << "Saved plot: " << plotName << endl;
     TCanvas* c_pmt_veto = new TCanvas("c_pmt_veto", "PMT Energy All vs After Veto", 1200, 800);
     h_pmt_energy_all->SetLineColor(kRed);
-    h_pmt_energy_without_veto->SetLineColor(kBlue);
+    h_pmt_energy_after_veto->SetLineColor(kBlue);
     h_pmt_energy_all->SetLineWidth(2);
-    h_pmt_energy_without_veto->SetLineWidth(2);
+    h_pmt_energy_after_veto->SetLineWidth(2);
     h_pmt_energy_all->SetTitle("PMT Energy All vs After Veto;Energy (p.e.);Events");
-    double max_veto = std::max(h_pmt_energy_all->GetMaximum(), h_pmt_energy_without_veto->GetMaximum());
+    double max_veto = std::max(h_pmt_energy_all->GetMaximum(), h_pmt_energy_after_veto->GetMaximum());
     h_pmt_energy_all->SetMaximum(max_veto * 1.2);
     h_pmt_energy_all->SetMinimum(0.1);
     h_pmt_energy_all->Draw();
-    h_pmt_energy_without_veto->Draw("SAME");
+    h_pmt_energy_after_veto->Draw("SAME");
     gPad->SetLogy(1);
-    TLegend* leg_veto = new TLegend(0.15, 0.7, 0.35, 0.9);
+    TLegend* leg_veto = new TLegend(0.4, 0.75, 0.6, 0.85);
     leg_veto->AddEntry(h_pmt_energy_all, "All Events", "l");
-    leg_veto->AddEntry(h_pmt_energy_without_veto, "After Veto", "l");
+    leg_veto->AddEntry(h_pmt_energy_after_veto, "After Veto", "l");
     leg_veto->Draw();
     c_pmt_veto->Update();
     plotName = OUTPUT_DIR + "/PMT_Energy_All_vs_AfterVeto.png";
@@ -974,8 +1025,8 @@ int main(int argc, char *argv[]) {
     h_pmt_energy_tagged->Draw("SAME HIST");
     h_pmt_energy_untagged->Draw("SAME HIST");
     h_pmt_energy_veto_pass->Draw("SAME HIST");
-    gPad->SetLogy(1);
-    TLegend* leg_categories = new TLegend(0.6, 0.7, 0.85, 0.9);
+    gPad->SetLogy();
+    TLegend* leg_categories = new TLegend(0.4, 0.75, 0.6, 0.85);
     leg_categories->AddEntry(h_pmt_energy_cosmic, "Cosmic Events", "l");
     leg_categories->AddEntry(h_pmt_energy_tagged, "Tagged Events", "l");
     leg_categories->AddEntry(h_pmt_energy_untagged, "Untagged Events", "l");
@@ -985,7 +1036,6 @@ int main(int argc, char *argv[]) {
     plotName = OUTPUT_DIR + "/PMT_Energy_Categories.png";
     c_pmt_categories->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    // New: Overlaid plots for each PMT
     TCanvas* c_pmt_individual = new TCanvas("c_pmt_individual", "PMT Individual Energy", 1200, 800);
     for (int pmt = 0; pmt < N_PMTS; ++pmt) {
         c_pmt_individual->Clear();
@@ -1000,7 +1050,7 @@ int main(int argc, char *argv[]) {
         h_pmt_energy_all_pmt[pmt]->Draw();
         h_pmt_energy_veto_pass_pmt[pmt]->Draw("SAME");
         gPad->SetLogy(1);
-        TLegend* leg_pmt = new TLegend(0.15, 0.7, 0.35, 0.9);
+        TLegend* leg_pmt = new TLegend(0.4, 0.75, 0.6, 0.85);
         leg_pmt->AddEntry(h_pmt_energy_all_pmt[pmt], "All Events", "l");
         leg_pmt->AddEntry(h_pmt_energy_veto_pass_pmt[pmt], "Veto-Passing Events", "l");
         leg_pmt->Draw();
@@ -1010,6 +1060,7 @@ int main(int argc, char *argv[]) {
         cout << "Saved plot: " << plotName << endl;
         delete leg_pmt;
     }
+    // Cleanup
     delete c;
     delete c_pmt_veto;
     delete c_pmt_categories;
@@ -1025,7 +1076,7 @@ int main(int argc, char *argv[]) {
     delete hMyNueEnergyVsDt;
     delete hMyNueBkgEnergy;
     delete h_pmt_energy_all;
-    delete h_pmt_energy_without_veto;
+    delete h_pmt_energy_after_veto;
     delete h_pmt_energy_cosmic;
     delete h_pmt_energy_untagged;
     delete h_pmt_energy_tagged;
@@ -1042,5 +1093,7 @@ int main(int argc, char *argv[]) {
         delete h_pmt_energy_all_pmt[i];
         delete h_pmt_energy_veto_pass_pmt[i];
     }
+    delete leg_veto;
+    delete leg_categories;
     return 0;
 }
