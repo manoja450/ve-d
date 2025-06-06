@@ -1030,7 +1030,7 @@ int main(int argc, char *argv[]) {
     leg_categories->AddEntry(h_pmt_energy_cosmic, "Cosmic Events", "l");
     leg_categories->AddEntry(h_pmt_energy_tagged, "Tagged Events", "l");
     leg_categories->AddEntry(h_pmt_energy_untagged, "Untagged Events", "l");
-    leg_categories->AddEntry(h_pmt_energy_veto_pass, "Veto-Passing Events", "l");
+    leg_categories->AddEntry(h_pmt_energy_veto_pass, "Passing veto Cut", "l");
     leg_categories->Draw();
     c_pmt_categories->Update();
     plotName = OUTPUT_DIR + "/PMT_Energy_Categories.png";
@@ -1043,7 +1043,7 @@ int main(int argc, char *argv[]) {
         h_pmt_energy_veto_pass_pmt[pmt]->SetLineColor(kBlue);
         h_pmt_energy_all_pmt[pmt]->SetLineWidth(2);
         h_pmt_energy_veto_pass_pmt[pmt]->SetLineWidth(2);
-        h_pmt_energy_all_pmt[pmt]->SetTitle(Form("PMT %d Energy All vs Veto-Passing;Energy (p.e.);Events", pmt + 1));
+        h_pmt_energy_all_pmt[pmt]->SetTitle(Form("PMT %d Energy All vs After Veto;Energy (p.e.);Events", pmt + 1));
         double max_pmt = std::max(h_pmt_energy_all_pmt[pmt]->GetMaximum(), h_pmt_energy_veto_pass_pmt[pmt]->GetMaximum());
         h_pmt_energy_all_pmt[pmt]->SetMaximum(max_pmt * 1.2);
         h_pmt_energy_all_pmt[pmt]->SetMinimum(0.1);
@@ -1052,7 +1052,7 @@ int main(int argc, char *argv[]) {
         gPad->SetLogy(1);
         TLegend* leg_pmt = new TLegend(0.4, 0.75, 0.6, 0.85);
         leg_pmt->AddEntry(h_pmt_energy_all_pmt[pmt], "All Events", "l");
-        leg_pmt->AddEntry(h_pmt_energy_veto_pass_pmt[pmt], "Veto-Passing Events", "l");
+        leg_pmt->AddEntry(h_pmt_energy_veto_pass_pmt[pmt], "After Veto", "l");
         leg_pmt->Draw();
         c_pmt_individual->Update();
         plotName = Form("%s/PMT%d_Energy_All_vs_VetoPass.png", OUTPUT_DIR.c_str(), pmt + 1);
