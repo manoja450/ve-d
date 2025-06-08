@@ -1,4 +1,4 @@
-
+//This code classifies the cosmic, tagged, untagged and veto passing events and generates the relevant plots. It also features some basic cuts for V+D selection and its spectrum plots, but it needs further improvements.
 #include <TFile.h>
 #include <TTree.h>
 #include <TBranch.h>
@@ -15,7 +15,7 @@
 #include <TROOT.h>
 #include <iostream>
 #include <fstream>
-#include <vector
+#include <vector>
 #include <numeric>
 #include <algorithm>
 #include <string>
