@@ -1087,7 +1087,7 @@ int main(int argc, char *argv[]) {
             h_veto->SetLineColor(kBlue);
             h_all->SetLineWidth(2);
             h_veto->SetLineWidth(2);
-            h_all->GetXaxis()->SetTitleSize(0.08);
+            h_all->GetXaxis()->SetTitleSize(0.07);
             h_all->GetYaxis()->SetTitleSize(0.09);
             h_all->GetXaxis()->SetLabelSize(0.04);
             h_all->GetYaxis()->SetLabelSize(0.04);
