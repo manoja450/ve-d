@@ -35,7 +35,7 @@ const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
 const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
 const int ADCSIZE = 45;                 // Number of ADC samples per waveform
-const std::string OUTPUT_DIR = "output"; // Output directory
+const std::string OUTPUT_DIR = "output2"; // Output directory
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 10.0; // Fit range max (µs)
 
@@ -53,14 +53,14 @@ const int MICHEL_PMT_MIN = 8;           // Min PMT hits for Michel
 
 const double NUE_ENERGY_MIN = 352;      // Min PMT energy for νₑ (p.e.)
 const double NUE_ENERGY_MAX = 1088;     // Max PMT energy for νₑ (p.e.)
-const double NUE_VETO_THRESHOLD = 80;   // Max SiPM sum for νₑ (ADC)
+const double NUE_VETO_THRESHOLD = 5000;   // Max SiPM sum for νₑ (ADC)
 const int NUE_PMT_MIN = 4;              // Min PMT hits for νₑ
 const double NUE_DT_MIN = 1.0;          // Min time after beam for νₑ (µs)
 const double NUE_DT_MAX = 10.0;         // Max time after beam for νₑ (µs)
 
 const double COSMIC_SIPM_THRESHOLD = 500.0; // SiPM threshold for cosmic events (ADC)
-const double UNTAGGED_SIPM_THRESHOLD = 150.0; // SiPM threshold for untagged events (ADC)
-const double UNTAGGED_ENERGY_MAX = 80;  // Max PMT energy for untagged (p.e.)
+const double UNTAGGED_SIPM_THRESHOLD = 30.0; // SiPM threshold for untagged events (ADC)
+const double UNTAGGED_ENERGY_MAX = 1500;  // Max PMT energy for untagged (p.e.)
 const int UNTAGGED_PMT_MIN = 1;         // Min PMT hits for untagged
 const int UNTAGGED_PMT_MAX = 12;         // Max PMT hits for untagged
 
