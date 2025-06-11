@@ -1,4 +1,3 @@
-//This code classifies the cosmic, tagged, untagged and veto passing events and generates the relevant plots. It also features some basic cuts for V+D selection and its spectrum plots, but it needs further improvements.
 #include <TFile.h>
 #include <TTree.h>
 #include <TBranch.h>
@@ -61,9 +60,9 @@ const double NUE_DT_MAX = 10.0;         // Max time after beam for νₑ (µs)
 
 const double COSMIC_SIPM_THRESHOLD = 500.0; // SiPM threshold for cosmic events (ADC)
 const double UNTAGGED_SIPM_THRESHOLD = 150.0; // SiPM threshold for untagged events (ADC)
-const double UNTAGGED_ENERGY_MAX = 25;  // Max PMT energy for untagged (p.e.)
+const double UNTAGGED_ENERGY_MAX = 80;  // Max PMT energy for untagged (p.e.)
 const int UNTAGGED_PMT_MIN = 1;         // Min PMT hits for untagged
-const int UNTAGGED_PMT_MAX = 7;         // Max PMT hits for untagged
+const int UNTAGGED_PMT_MAX = 12;         // Max PMT hits for untagged
 
 // Pulse structure
 struct myPulse {
@@ -273,7 +272,7 @@ void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err
     Long64_t nLEDFlashes[N_PMTS] = {0};
     for (int i = 0; i < N_PMTS; i++) {
         histArea[i] = new TH1F(Form("PMT%d_Area", i + 1),
-                               Form("; Area; Events per 3 ADCs", i + 1),
+                               Form("PMT %d;Area;Events per 3 ADCs", i + 1),
                                150, -50, 400);
         histArea[i]->SetLineColor(kRed);
         histArea[i]->GetXaxis()->SetLabelFont(42);
@@ -316,12 +315,12 @@ void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err
         f->Draw("same");
         mu1[i] = f->GetParameter(4);
         mu1_err[i] = f->GetParError(4);
-        TLatex tex;
-        tex.SetTextFont(42);
-        tex.SetTextSize(0.06);
-        tex.SetTextAlign(22);
-        tex.SetNDC();
-        tex.DrawLatex(0.5, 0.92, Form("PMT %d", i + 1));
+        TLatex *tex = new TLatex();
+        tex->SetTextFont(42);
+        tex->SetTextSize(0.06);
+        tex->SetTextAlign(22);
+        tex->SetNDC();
+        tex->DrawLatex(0.5, 0.92, Form("PMT %d", i + 1));
         gPad->Update();
         if (auto stats = (TPaveStats*)histArea[i]->FindObject("stats")) {
             stats->SetX1NDC(0.65);
@@ -336,12 +335,12 @@ void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err
         }
         canvas->SaveAs(Form("%s/PMT%d_Energy_Distribution.png", OUTPUT_DIR.c_str(), i + 1));
         delete f;
+        delete tex;
     }
     delete canvas;
     gStyle->SetTextFont(42);
     gStyle->SetLabelFont(42, "XYZ");
     gStyle->SetTitleFont(42, "XYZ");
-    gStyle->SetImageScaling(2.0);
     TCanvas *master = new TCanvas("MasterCanvas", "Combined PMT Energy Distributions", 1200, 800);
     master->Divide(3, 4, 0, 0);
     int layout[4][3] = {
@@ -373,12 +372,12 @@ void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err
             histArea[idx]->Fit(f2, "R");
             histArea[idx]->Draw();
             f2->Draw("same");
-            TLatex tex2;
-            tex2.SetTextFont(42);
-            tex2.SetTextSize(0.08);
-            tex2.SetTextAlign(22);
-            tex2.SetNDC();
-            tex2.DrawLatex(0.5, 0.92, Form("PMT %d", idx + 1));
+            TLatex *tex2 = new TLatex();
+            tex2->SetTextFont(42);
+            tex2->SetTextSize(0.08);
+            tex2->SetTextAlign(22);
+            tex2->SetNDC();
+            tex2->DrawLatex(0.5, 0.92, Form("PMT %d", idx + 1));
             gPad->Update();
             if (auto s2 = (TPaveStats*)histArea[idx]->FindObject("stats")) {
                 s2->SetX1NDC(0.65);
@@ -392,11 +391,11 @@ void myCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err
                 s2->SetName("");
             }
             delete f2;
+            delete tex2;
         }
     }
     master->SaveAs(Form("%s/Combined_PMT_Energy_Distributions.pdf", OUTPUT_DIR.c_str()));
     master->SaveAs(Form("%s/Combined_PMT_Energy_Distributions.png", OUTPUT_DIR.c_str()));
-    gStyle->SetImageScaling(1.0);
     for (int i = 0; i < N_PMTS; ++i) delete histArea[i];
     delete master;
     calibFile->Close();
@@ -481,10 +480,10 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < N_PMTS; ++i) {
         h_pmt_energy_all_pmt[i] = new TH1D(Form("pmt_energy_all_pmt%d", i + 1),
                                            Form("PMT %d Energy for All Events;Energy (p.e.);Events", i + 1),
-                                           100, 0, 1500);
+                                           100, 0, 1000);
         h_pmt_energy_veto_pass_pmt[i] = new TH1D(Form("pmt_energy_veto_pass_pmt%d", i + 1),
                                                 Form("PMT %d Energy for Veto-Passing Events;Energy (p.e.);Events", i + 1),
-                                                100, 0, 1500);
+                                                100, 0, 1000);
     }
 
     for (const auto& inputFileName : inputFiles) {
@@ -519,7 +518,7 @@ int main(int argc, char *argv[]) {
         t->SetBranchAddress("pulseH", pulseH);
         t->SetBranchAddress("peakPosition", peakPosition);
         t->SetBranchAddress("area", area);
-        t->SetBranchAddress("nsTime", &nsTime); // Fixed: Pass address of nsTime
+        t->SetBranchAddress("nsTime", &nsTime);
         t->SetBranchAddress("triggerBits", &triggerBits);
         int numEntries = t->GetEntries();
         cout << "Collecting beam pulses from " << numEntries << " entries in " << inputFileName << endl;
@@ -569,9 +568,9 @@ int main(int argc, char *argv[]) {
             std::vector<double> chan_starts_no_outliers;
             TH1D h_wf("h_wf", "Waveform", ADCSIZE, 0, ADCSIZE);
             bool pulse_at_end = false;
-            int pulse_at_end_count = 0;
             std::vector<double> sipm_energies(10, 0);
             for (int iChan = 0; iChan < 23; iChan++) {
+                int pulse_at_end_count = 0;
                 for (int i = 0; i < ADCSIZE; i++) {
                     h_wf.SetBinContent(i + 1, adcVal[iChan][i] - baselineMean[iChan]);
                 }
@@ -1060,11 +1059,73 @@ int main(int argc, char *argv[]) {
         cout << "Saved plot: " << plotName << endl;
         delete leg_pmt;
     }
+
+    // Create combined plot of PMT energy: all events vs after veto
+    TCanvas *c_pmt_combined = new TCanvas("c_pmt_combined", "Combined PMT Energy All vs After Veto", 1800, 1200);
+    c_pmt_combined->Divide(3, 4, 0, 0); // Same as SPE plot
+    int layout[4][3] = {
+        {0, 10, 7},
+        {2, 6, 3},
+        {8, 9, 11},
+        {4, 5, 1}
+    };
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            int pad = r * 3 + c + 1;
+            c_pmt_combined->cd(pad);
+            gPad->SetLogy();
+            gPad->SetLeftMargin(0.15);
+            gPad->SetRightMargin(0.12);
+            gPad->SetBottomMargin(0.15);
+            gPad->SetTopMargin(0.10);
+            int idx = layout[r][c];
+            TH1D *h_all = h_pmt_energy_all_pmt[idx];
+            TH1D *h_veto = h_pmt_energy_veto_pass_pmt[idx];
+            h_all->SetTitle("");
+            h_veto->SetTitle("");
+            h_all->SetLineColor(kRed);
+            h_veto->SetLineColor(kBlue);
+            h_all->SetLineWidth(2);
+            h_veto->SetLineWidth(2);
+            h_all->GetXaxis()->SetTitleSize(0.08);
+            h_all->GetYaxis()->SetTitleSize(0.09);
+            h_all->GetXaxis()->SetLabelSize(0.04);
+            h_all->GetYaxis()->SetLabelSize(0.04);
+            h_all->GetYaxis()->SetTitle("Events");
+            h_all->GetYaxis()->SetTitleOffset(0.8);
+            h_all->GetXaxis()->SetTitle("Energy (p.e.)");
+            double max_val = std::max(h_all->GetMaximum(), h_veto->GetMaximum());
+            h_all->SetMaximum(max_val * 1.5);
+            h_all->SetMinimum(0.5);
+            h_all->Draw();
+            h_veto->Draw("SAME");
+            TLatex *tex = new TLatex();
+            tex->SetTextFont(42);
+            tex->SetTextSize(0.10);
+            tex->SetTextAlign(22);
+            tex->SetNDC();
+            tex->DrawLatex(0.5, 0.92, Form("PMT %d", idx + 1));
+            TLegend *leg = new TLegend(0.65, 0.65, 0.95, 0.75);
+            leg->SetBorderSize(0);
+            leg->SetTextSize(0.04);
+            leg->AddEntry(h_all, "All", "l");
+            leg->AddEntry(h_veto, "Veto", "l");
+            leg->Draw();
+            delete tex;
+            delete leg;
+        }
+    }
+    c_pmt_combined->Update();
+    plotName = OUTPUT_DIR + "/Combined_PMT_Energy_All_vs_Veto.png";
+    c_pmt_combined->SaveAs(plotName.c_str());
+    cout << "Saved combined plot: " << plotName << endl;
+
     // Cleanup
     delete c;
     delete c_pmt_veto;
     delete c_pmt_categories;
     delete c_pmt_individual;
+    delete c_pmt_combined;
     delete hMyMuonEnergy;
     delete hMyMichelEnergy;
     delete hMyDtMichel;
