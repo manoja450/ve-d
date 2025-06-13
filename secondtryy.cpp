@@ -35,7 +35,7 @@ const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
 const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
 const int ADCSIZE = 45;                 // Number of ADC samples per waveform
-const std::string OUTPUT_DIR = "output234343"; // Output directory
+const std::string OUTPUT_DIR = "output100"; // Output directory
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 10.0; // Fit range max (µs)
 
@@ -462,12 +462,12 @@ int main(int argc, char *argv[]) {
     TH1D* hMyTriggerBits = new TH1D("trigger_bits", "Trigger Bits Distribution;Trigger Bits;Counts", 36, 0, 36);
     
     // νₑ signal and background histograms
-    TH1D* hMyNueEnergy = new TH1D("nue_energy", "νₑ + d Signal Energy;Energy (p.e.);Counts/10 p.e.", 150, 0, 1500);
-    TH1D* hMyNueDt = new TH1D("nue_dt", "νₑ Time Difference;Time to Beam (#mus);Counts/Events", 120, 0, 12);
-    TH1D* hMyNuePmtHits = new TH1D("nue_pmt_hits", "νₑ PMT Hits;Number of PMTs;Counts", 12, 0, 12);
-    TH2D* hMyNueEnergyVsDt = new TH2D("nue_energy_vs_dt", "νₑ Energy vs Time Difference;dt (#mus);Energy (p.e.)", 120, 0, 12, 150, 0, 1500);
-    TH1D* hMyNueBkgEnergy = new TH1D("nue_bkg_energy", "νₑ Non-Candidate Background;Energy (p.e.);Counts/10 p.e.", 150, 0, 1500);
-    TH1D* hMyNueOxygenEnergy = new TH1D("nue_oxygen_energy", "νₑ + O Background Energy;Energy (p.e.);Counts/10 p.e.", 150, 0, 3000);
+    TH1D* hMyNueEnergy = new TH1D("nue_energy", "#nu_{e} + d Signal Energy;Energy (p.e.);Counts/10 p.e.", 150, 0, 1500);
+    TH1D* hMyNueDt = new TH1D("nue_dt", "#nu_{e} Time Difference;Time to Beam (#mus);Counts/Events", 120, 0, 12);
+    TH1D* hMyNuePmtHits = new TH1D("nue_pmt_hits", "#nu_{e} PMT Hits;Number of PMTs;Counts", 12, 0, 12);
+    TH2D* hMyNueEnergyVsDt = new TH2D("nue_energy_vs_dt", "#nu_{e} Energy vs Time Difference;dt (#mus);Energy (p.e.)", 120, 0, 12, 150, 0, 1500);
+    TH1D* hMyNueBkgEnergy = new TH1D("nue_bkg_energy", "#nu_{e} Non-Candidate Background;Energy (p.e.);Counts/10 p.e.", 150, 0, 1500);
+    TH1D* hMyNueOxygenEnergy = new TH1D("nue_oxygen_energy", "#nu_{e} + O Background Energy;Energy (p.e.);Counts/10 p.e.", 150, 0, 3000);
     
     TH1D* h_pmt_energy_all = new TH1D("pmt_energy_all", "PMT Energy for All Events;Energy (p.e.);Events", 100, 0, 3000);
     TH1D* h_pmt_energy_after_veto = new TH1D("pmt_energy_after_veto", "PMT Energy After Veto;Energy (p.e.);Events", 100, 0, 3000);
@@ -1027,12 +1027,12 @@ int main(int argc, char *argv[]) {
     cout << "Saved plot: " << plotName << endl;
     
     // Comparison plot of signal and background
-    TCanvas* c_nue_comparison = new TCanvas("c_nue_comparison", "νₑ + d vs νₑ + O", 1200, 800);
+    TCanvas* c_nue_comparison = new TCanvas("c_nue_comparison", "#nu_{e}+ d vs #nu_{e} + O", 1200, 800);
     hMyNueEnergy->SetLineColor(kBlue);
     hMyNueOxygenEnergy->SetLineColor(kRed);
     hMyNueEnergy->SetLineWidth(2);
     hMyNueOxygenEnergy->SetLineWidth(2);
-    hMyNueEnergy->SetTitle("νₑ + d Signal vs νₑ + O Background;Energy (p.e.);Events");
+    hMyNueEnergy->SetTitle("#nu_{e}+ d Signal vs #nu_{e} + O Background;Energy (p.e.);Events");
     double max_nue = std::max(hMyNueEnergy->GetMaximum(), hMyNueOxygenEnergy->GetMaximum());
     hMyNueEnergy->SetMaximum(max_nue * 1.2);
     hMyNueEnergy->SetMinimum(0.1);
@@ -1040,8 +1040,8 @@ int main(int argc, char *argv[]) {
     hMyNueOxygenEnergy->Draw("SAME");
     gPad->SetLogy(1);
     TLegend* leg_nue = new TLegend(0.6, 0.75, 0.85, 0.85);
-    leg_nue->AddEntry(hMyNueEnergy, "νₑ + d Signal (22-68 MeV)", "l");
-    leg_nue->AddEntry(hMyNueOxygenEnergy, "νₑ + O Background", "l");
+    leg_nue->AddEntry(hMyNueEnergy, "#nu_{e} + d Signal (22-68 MeV)", "l");
+    leg_nue->AddEntry(hMyNueOxygenEnergy, "#nu_{e} + O Background", "l");
     leg_nue->Draw();
     c_nue_comparison->Update();
     plotName = OUTPUT_DIR + "/Nue_Signal_vs_Oxygen.png";
