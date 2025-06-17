@@ -1,0 +1,179 @@
+#include <iostream>
+#include <TFile.h>
+#include <TTree.h>
+#include <TGraph.h>
+#include <TCanvas.h>
+#include <TMultiGraph.h>
+#include <TLegend.h>
+#include <TAxis.h>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <TLatex.h>
+#include <sys/stat.h>
+#include <cerrno>
+#include <cstring>
+
+using namespace std;
+
+double roundUpToBin(double value, double binSize) {
+    return ceil((value + 0.5) / binSize) * binSize;
+}
+
+double roundDownToBin(double value, double binSize) {
+    return floor(value / binSize) * binSize;
+}
+
+void lowlight(const char *fileName, int EventID) {
+    // Open ROOT file
+    TFile *file = TFile::Open(fileName);
+    if (!file || file->IsZombie()) {
+        cerr << "Error opening file: " << fileName << endl;
+        return;
+    }
+
+    // Access TTree
+    TTree *tree = (TTree*)file->Get("tree");
+    if (!tree) {
+        cerr << "Error accessing TTree 'tree'!" << endl;
+        file->Close();
+        return;
+    }
+
+    // Check for adcVal branch
+    if (!tree->GetBranch("adcVal")) {
+        cerr << "Error: Branch 'adcVal' not found!" << endl;
+        file->Close();
+        return;
+    }
+
+    Short_t adcVal[23][45]; // ADC values for 23 channels and 45 time bins
+    tree->SetBranchAddress("adcVal", adcVal);
+
+    // Check EventID validity
+    Long64_t nEntries = tree->GetEntries();
+    if (EventID < 0 || EventID >= nEntries) {
+        cerr << "Error: EventID " << EventID << " is out of range (0-" << nEntries-1 << ")" << endl;
+        file->Close();
+        return;
+    }
+
+    tree->GetEntry(EventID); // Load the specified event
+
+    // Find min and max ADC values across all channels for samples 22-40
+    double maxADC = 0;
+    double minADC = 0;
+    for (int i = 0; i < 23; i++) {
+        for (int k = 21; k < 40; k++) { // Samples 22-40 (0-based: 21-39)
+            if (adcVal[i][k] > maxADC) maxADC = adcVal[i][k];
+            if (adcVal[i][k] < minADC) minADC = adcVal[i][k];
+        }
+    }
+    maxADC = roundUpToBin(maxADC, 10); // Round up to nearest 10
+    minADC = roundDownToBin(minADC, 10); // Round down to nearest 10
+
+    // Channel maps (Channel 22 is unused)
+    int pmtChannelMap[12] = {0, 10, 7, 2, 6, 3, 8, 9, 11, 4, 5, 1}; // PMT channels
+    int sipmChannelMap[10] = {12, 13, 14, 15, 16, 17, 18, 19, 20, 21}; // SiPM channels
+
+    // Define distinct colors for better visibility
+    int pmtColors[12] = {kBlue, kCyan, kAzure, kTeal, kBlue+2, kCyan+2, kAzure+2, kTeal+2, kBlue+3, kCyan+3, kAzure+3, kTeal+3};
+    int sipmColors[10] = {kRed, kMagenta, kPink, kOrange, kRed+2, kMagenta+2, kPink+2, kOrange+2, kRed+3, kMagenta+3};
+
+    // Create directory for the event
+    TString dirName = Form("Event_%d", EventID);
+    if (mkdir(dirName.Data(), 0777) == -1 && errno != EEXIST) {
+        cerr << "Error creating directory: " << dirName << " (" << strerror(errno) << ")" << endl;
+    }
+
+    // Create single canvas for all waveforms
+    TCanvas *canvas = new TCanvas("SingleCanvas", Form("Peak Waveforms for Muon Event ", EventID), 1200, 600);
+    TMultiGraph *multiGraph = new TMultiGraph();
+    multiGraph->SetTitle(Form("Peak Waveforms for Muon Event;Sample Index;ADC Value (mV)", EventID));
+
+    TLegend *legend = new TLegend(0.85, 0.15, 0.95, 0.85); // Narrower legend
+    legend->SetBorderSize(1);
+    legend->SetTextSize(0.025);
+
+    const int samplesPerWaveform = 19; // Samples 22-40 (21-39 in 0-based indexing)
+    const int horizontalSpacing = 5; // Gap between waveforms
+    int currentXOffset = 0; // Starting x-coordinate
+
+    // Plot PMT waveforms (samples 22-40)
+    for (int i = 0; i < 12; i++) {
+        TGraph *graph = new TGraph();
+        int adcIndex = pmtChannelMap[i];
+        for (int k = 21; k < 40; k++) { // Samples 22-40
+            int sampleIndex = k - 21; // Normalize to 0-based for this waveform
+            double x = currentXOffset + sampleIndex; // Sequential x-coordinate
+            double adcValue = adcVal[adcIndex][k];
+            graph->SetPoint(k - 21, x, adcValue);
+        }
+        graph->SetLineColor(pmtColors[i]);
+        graph->SetLineWidth(2);
+        multiGraph->Add(graph);
+        legend->AddEntry(graph, Form("PMT %d", i + 1), "l");
+        currentXOffset += samplesPerWaveform + horizontalSpacing; // Shift for next waveform
+    }
+
+    // Plot SiPM waveforms (samples 22-40)
+    for (int i = 0; i < 10; i++) {
+        TGraph *graph = new TGraph();
+        int adcIndex = sipmChannelMap[i];
+        for (int k = 21; k < 40; k++) { // Samples 22-40
+            int sampleIndex = k - 21; // Normalize to 0-based for this waveform
+            double x = currentXOffset + sampleIndex; // Sequential x-coordinate
+            double adcValue = adcVal[adcIndex][k];
+            graph->SetPoint(k - 21, x, adcValue);
+        }
+        graph->SetLineColor(sipmColors[i]);
+        graph->SetLineWidth(2);
+        multiGraph->Add(graph);
+        legend->AddEntry(graph, Form("SiPM %d", i + 1), "l");
+        currentXOffset += samplesPerWaveform + horizontalSpacing; // Shift for next waveform
+    }
+
+    // Draw the multi-graph
+    multiGraph->Draw("AL");
+    multiGraph->GetXaxis()->SetTitle("Sample Index");
+    multiGraph->GetYaxis()->SetTitle("ADC Value ");
+    multiGraph->GetXaxis()->SetRangeUser(0, currentXOffset - horizontalSpacing);
+    multiGraph->GetYaxis()->SetRangeUser(minADC, maxADC);
+
+    // Draw legend
+    legend->Draw();
+
+    // Save the plot
+    TString plotFileName = Form("%s/PeakWaveforms_Event%d.png", dirName.Data(), EventID);
+    canvas->SaveAs(plotFileName);
+    cout << "Peak waveforms plot saved as " << plotFileName << endl;
+
+    // Clean up (TMultiGraph owns TGraphs, so no need to delete them individually)
+    delete multiGraph;
+    delete legend;
+    delete canvas;
+    file->Close();
+    delete file;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 3) {
+        cerr << "Usage: " << argv[0] << " <root_file> <EventID1> <EventID2> ..." << endl;
+        return 1;
+    }
+
+    const char* fileName = argv[1];
+    for (int i = 2; i < argc; i++) {
+        int EventID;
+        try {
+            EventID = stoi(argv[i]);
+        } catch (...) {
+            cerr << "Error: Invalid EventID '" << argv[i] << "'" << endl;
+            continue;
+        }
+        cout << "Processing EventID: " << EventID << endl;
+        lowlight(fileName, EventID);
+    }
+
+    return 0;
+}
