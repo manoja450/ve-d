@@ -35,15 +35,15 @@ const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
 const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
 const int ADCSIZE = 45;                 // Number of ADC samples per waveform
-const std::string OUTPUT_DIR = "gold"; // Output directory
+const std::string OUTPUT_DIR = "gfg"; // Output directory
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 10.0; // Fit range max (µs)
 const double MUON_VETO_WINDOW = 16.0; // Time window for muon veto (µs)
 
 // Event selection thresholds
 const double MUON_ENERGY_THRESHOLD = 50; // Min PMT energy for muon (p.e.)
+const double GAMMA_ENERGY_MAX = 45;      // Max energy for gamma-like events
 const std::vector<double> SIDE_SIPM_THRESHOLDS = {750, 950, 1200, 1375, 525, 700, 700, 500}; // Channels 12-19 (ADC)
-//const std::vector<double> SIDE_SIPM_THRESHOLDS = {3000, 150, 300, 375, 225, 200, 200, 200}; // Channels 12-19 (ADC)
 const double TOP_SIPM_THRESHOLD = 450; // Channels 20-21 (ADC)
 
 const double MICHEL_ENERGY_MIN = 40;    // Min PMT energy for Michel (p.e.)
@@ -87,6 +87,7 @@ struct myPulse {
     bool is_muon;          // Muon candidate flag
     bool is_michel;        // Michel electron candidate flag
     bool is_nue;           // νₑ candidate flag
+    bool is_gamma;         // Gamma-like event flag
     std::vector<double> pmt_energies; // Per-PMT energies (p.e.)
     double pmt_variance;   // Variance of PMT energies
 };
@@ -180,7 +181,7 @@ bool is_sipm_low(const std::vector<double>& sipm_energies) {
             return false;
         }
     }
-    return !(sipm_energies[8] > TOP_SIPM_THRESHOLD || sipm_energies[9] > TOP_SIPM_THRESHOLD);
+    return !(sipm_energies[8] > TOP_SIPM_THRESHOLD || sipm_energies[9] > TOP_SIPM_THREShOLD);
 }
 
 bool is_sipm_hit_cosmic(const std::vector<double>& sipm_energies) {
@@ -201,8 +202,16 @@ bool is_sipm_hit_untagged(const std::vector<double>& sipm_energies) {
     return false;
 }
 
+bool is_gamma_like_event(const myPulse& p, const std::vector<double>& sipm_energies) {
+    return p.energy > 20 && p.energy < GAMMA_ENERGY_MAX &&
+           is_sipm_hit_cosmic(sipm_energies) && 
+           !is_sipm_hit_muon(sipm_energies) &&
+           p.pmt_variance < 50;
+}
+
 bool is_muon_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    return p.energy > MUON_ENERGY_THRESHOLD && is_sipm_hit_muon(sipm_energies);
+    return p.energy > MUON_ENERGY_THRESHOLD && 
+           (is_sipm_hit_muon(sipm_energies) || is_gamma_like_event(p, sipm_energies));
 }
 
 bool is_michel_event(const myPulse& p, const std::vector<double>& sipm_energies, double dt) {
@@ -212,7 +221,8 @@ bool is_michel_event(const myPulse& p, const std::vector<double>& sipm_energies,
            dt <= MICHEL_DT_MAX &&
            p.number >= MICHEL_PMT_MIN &&
            is_sipm_low(sipm_energies) &&
-           !(p.trigger == 1 || p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
+           !(p.trigger == 1 || p.trigger == 4 || p.trigger == 8 || p.trigger == 16) &&
+           (p.start - p.last_mu) < MUON_VETO_WINDOW;
 }
 
 bool is_nue_event(const myPulse& p, double beam_dt, const std::vector<double>& sipm_energies) {
@@ -228,21 +238,29 @@ bool is_nue_event(const myPulse& p, double beam_dt, const std::vector<double>& s
            !any_sipm_high &&
            p.pmt_variance < PMT_VARIANCE_MAX &&
            !p.is_muon &&
-           !p.is_michel;
+           !p.is_michel &&
+           !p.is_gamma;
 }
 
 bool is_cosmic_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    bool standard_cosmic = (p.is_muon || p.is_michel || is_sipm_hit_cosmic(sipm_energies)) ;
-    bool gamma_cosmic = is_sipm_hit_cosmic(sipm_energies);
-    return standard_cosmic || gamma_cosmic;
+    return (p.is_muon || p.is_michel || is_sipm_hit_cosmic(sipm_energies) || 
+           is_gamma_like_event(p, sipm_energies));
 }
 
 bool is_tagged_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    return (is_sipm_hit_cosmic(sipm_energies) || p.is_muon || p.is_michel);
+    return (is_sipm_hit_cosmic(sipm_energies) || p.is_muon || p.is_michel || p.is_gamma);
 }
 
 bool is_untagged_event(const myPulse& p, const std::vector<double>& sipm_energies, double beam_dt, bool pulse_at_end) {
-    bool is_non_muon_low_energy = p.energy <= UNTAGGED_ENERGY_MAX && !pulse_at_end && !is_sipm_hit_untagged(sipm_energies);
+    // Explicitly exclude all known event types
+    if (p.is_michel || p.is_muon || p.is_gamma) {
+        return false;
+    }
+    
+    bool is_non_muon_low_energy = p.energy <= UNTAGGED_ENERGY_MAX && 
+                                 !pulse_at_end && 
+                                 !is_sipm_hit_untagged(sipm_energies);
+    
     return p.trigger == 2 &&
            !is_sipm_hit_untagged(sipm_energies) &&
            p.number >= UNTAGGED_PMT_MIN &&
@@ -254,6 +272,7 @@ bool is_untagged_event(const myPulse& p, const std::vector<double>& sipm_energie
 bool is_veto_passing_event(const myPulse& p, const std::vector<double>& sipm_energies) {
     return !p.is_muon &&
            !p.is_michel &&
+           !p.is_gamma &&
            is_sipm_low(sipm_energies) &&
            p.number >= 1 &&
            p.energy > 1 &&
@@ -473,6 +492,7 @@ int main(int argc, char *argv[]) {
     int total_michels = 0, michels_vetoed = 0;
     int total_nue = 0, nue_passing_veto = 0;
     int total_untagged = 0, untagged_vetoed = 0;
+    int total_gamma = 0, gamma_vetoed = 0;
     
     // Main histograms
     TH1D* hMyMuonEnergy = new TH1D("muon_energy", "Muon Energy Spectrum;Energy (p.e.);Counts/100 p.e.", 550, -500, 5000);
@@ -513,6 +533,7 @@ int main(int argc, char *argv[]) {
     TH1D* h_sipm_gamma_cosmic = new TH1D("sipm_gamma_cosmic", 
         "SiPM Energy for Gamma-like Cosmic Events;SiPM Energy (ADC);Events", 
         100, 0, 5000);
+    TH1D* h_gamma_energy = new TH1D("gamma_energy", "Gamma-like Events Energy;Energy (p.e.);Events", 100, 0, 1000);
     TH1D* h_pmt_variance_nue = new TH1D("pmt_variance_nue", "PMT Energy Variance for #nu_{e} + d;Variance (p.e.^2);Events", 100, 0, 500);
     TH1D* h_pmt_variance_oxygen = new TH1D("pmt_variance_oxygen", "PMT Energy Variance for #nu_{e} + O;Variance (p.e.^2);Events", 100, 0, 500);
     TH1D* h_pulse_variance_nue = new TH1D("pulse_variance_nue", "Pulse Timing Variance for #nu_{e} + d;Variance (µs);Events", 100, 0, 0.1);
@@ -544,6 +565,7 @@ int main(int argc, char *argv[]) {
     vector<pair<string, Long64_t>> tagged_events;
     vector<pair<string, Long64_t>> untagged_events;
     vector<pair<string, Long64_t>> nue_events;
+    vector<pair<string, Long64_t>> gamma_events;
 
     for (const auto& inputFileName : inputFiles) {
         TFile *f = TFile::Open(inputFileName.c_str());
@@ -621,6 +643,7 @@ int main(int argc, char *argv[]) {
             p.is_muon = false;
             p.is_michel = false;
             p.is_nue = false;
+            p.is_gamma = false;
             p.pmt_energies = std::vector<double>(N_PMTS, 0.0);
             p.pmt_variance = 0;
             std::vector<double> all_chan_start, all_chan_end, all_chan_peak, all_chan_energy;
@@ -735,6 +758,19 @@ int main(int argc, char *argv[]) {
                 no_event61 = false;
             }
             
+            // Gamma-like event selection
+            p.is_gamma = is_gamma_like_event(p, sipm_energies);
+            if (p.is_gamma) {
+                total_gamma++;
+                h_gamma_energy->Fill(p.energy);
+                if (!is_veto_passing_event(p, sipm_energies)) {
+                    gamma_vetoed++;
+                }
+                if (gamma_events.size() < MAX_EVENTS_TO_PRINT) {
+                    gamma_events.push_back({inputFileName, eventID});
+                }
+            }
+            
             // Muon selection
             if (is_muon_event(p, sipm_energies)) {
                 p.is_muon = true;
@@ -746,7 +782,6 @@ int main(int argc, char *argv[]) {
                     muons_vetoed++;
                 }
                 
-                // Store muon event ID
                 if (muon_events.size() < MAX_EVENTS_TO_PRINT) {
                     muon_events.push_back({inputFileName, eventID});
                 }
@@ -765,12 +800,10 @@ int main(int argc, char *argv[]) {
                 michel_muon_times.insert(last_muon_time);
                 hMyMichelEnergy->Fill(p.energy);
                 
-                // Fill Michel No Muon histogram if no muon within 15 µs
                 if (last_muon_time == 0 || dt > MUON_VETO_WINDOW) {
                     hMichelNoMuon->Fill(p.energy);
                 }
                 
-                // Store Michel event ID
                 if (michel_events.size() < MAX_EVENTS_TO_PRINT) {
                     michel_events.push_back({inputFileName, eventID});
                 }
@@ -780,7 +813,6 @@ int main(int argc, char *argv[]) {
                 hMyEnergyVsDt->Fill(dt, p.energy);
             }
             
-            // Fill isolated non-vetoed events
             if (is_veto_passing_event(p, sipm_energies)) {
                 if (last_muon_time == 0 || dt > MUON_VETO_WINDOW) {
                     hIsolatedNonVetoed->Fill(p.energy);
@@ -801,7 +833,7 @@ int main(int argc, char *argv[]) {
                 bool is_nue_candidate = (beam_dt >= NUE_DT_MIN && beam_dt <= NUE_DT_MAX &&
                                         p.number >= NUE_PMT_MIN &&
                                         p.all_sipm_energy < NUE_VETO_THRESHOLD &&
-                                        !p.is_muon && !p.is_michel);
+                                        !p.is_muon && !p.is_michel && !p.is_gamma);
                 
                 if (is_nue_candidate) {
                     bool any_sipm_high = std::any_of(sipm_energies.begin(), sipm_energies.end(),
@@ -823,7 +855,6 @@ int main(int argc, char *argv[]) {
                         h_pmt_variance_nue->Fill(p.pmt_variance);
                         h_pulse_variance_nue->Fill(pulse_variance);
                         
-                        // Store νₑ event ID
                         if (nue_events.size() < MAX_EVENTS_TO_PRINT) {
                             nue_events.push_back({inputFileName, eventID});
                         }
@@ -852,13 +883,12 @@ int main(int argc, char *argv[]) {
                 }
             }
             
-            // Cosmic selection (including gamma rays)
+            // Cosmic selection
             if (is_cosmic_event(p, sipm_energies)) {
                 h_pmt_energy_cosmic->Fill(p.energy);
                 h_sipm_cosmic->Fill(p.all_sipm_energy);
                 
-                bool is_gamma_cosmic = is_sipm_hit_cosmic(sipm_energies);
-                if (is_gamma_cosmic) {
+                if (p.is_gamma) {
                     h_sipm_gamma_cosmic->Fill(p.all_sipm_energy);
                     num_gamma_cosmic++;
                 }
@@ -866,7 +896,6 @@ int main(int argc, char *argv[]) {
                 if (is_veto_passing_event(p, sipm_energies)) cosmic_veto_pass++;
                 else cosmic_veto_fail++;
                 
-                // Store cosmic event ID
                 if (cosmic_events.size() < MAX_EVENTS_TO_PRINT) {
                     cosmic_events.push_back({inputFileName, eventID});
                 }
@@ -879,14 +908,22 @@ int main(int argc, char *argv[]) {
                 if (is_veto_passing_event(p, sipm_energies)) tagged_veto_pass++;
                 else tagged_veto_fail++;
                 
-                // Store tagged event ID
                 if (tagged_events.size() < MAX_EVENTS_TO_PRINT) {
                     tagged_events.push_back({inputFileName, eventID});
                 }
             }
             
-            // Untagged selection
+            // Untagged selection - with explicit checks
             if (is_untagged_event(p, sipm_energies, beam_dt, pulse_at_end)) {
+                // Additional safeguard
+                if (p.is_michel || p.is_muon || p.is_gamma) {
+                    cout << "ERROR: Wrong classification! EventID: " << eventID 
+                         << " Michel:" << p.is_michel 
+                         << " Muon:" << p.is_muon 
+                         << " Gamma:" << p.is_gamma << endl;
+                    continue;
+                }
+                
                 h_pmt_energy_untagged->Fill(p.energy);
                 h_sipm_untagged->Fill(p.all_sipm_energy);
                 h_pmt_hits_untagged->Fill(p.number);
@@ -898,7 +935,6 @@ int main(int argc, char *argv[]) {
                 }
                 if (is_veto_passing_event(p, sipm_energies)) untagged_veto_pass++;
                 
-                // Store untagged event ID
                 if (untagged_events.size() < MAX_EVENTS_TO_PRINT) {
                     untagged_events.push_back({inputFileName, eventID});
                 }
@@ -918,7 +954,6 @@ int main(int argc, char *argv[]) {
                 total_num_veto_pass++;
             }
             
-            // Time to muon for all events
             if (p.start > last_muon_time) {
                 h_dt_all->Fill(p.start - last_muon_time);
             }
@@ -935,6 +970,7 @@ int main(int argc, char *argv[]) {
         cout << "Total Events: " << num_events << "\n";
         cout << "Muons Detected: " << num_muons << "\n";
         cout << "Michel Electrons Detected: " << num_michels << "\n";
+        cout << "Gamma-like Events Detected: " << total_gamma << "\n";
         cout << "νₑ + d Signal Events: " << num_nue << "\n";
         cout << "νₑ + O Background Events: " << num_nue_oxygen << "\n";
         cout << "Gamma Cosmic Events: " << num_gamma_cosmic << "\n";
@@ -949,6 +985,7 @@ int main(int argc, char *argv[]) {
         num_nue = 0;
         num_nue_oxygen = 0;
         num_gamma_cosmic = 0;
+        total_gamma = 0;
     }
     
     // Print event IDs for diagnostics
@@ -961,6 +998,11 @@ int main(int argc, char *argv[]) {
     
     cout << "\nMichel Events:\n";
     for (const auto& evt : michel_events) {
+        cout << "  File: " << evt.first << " Event: " << evt.second << endl;
+    }
+    
+    cout << "\nGamma-like Events:\n";
+    for (const auto& evt : gamma_events) {
         cout << "  File: " << evt.first << " Event: " << evt.second << endl;
     }
     
@@ -988,6 +1030,7 @@ int main(int argc, char *argv[]) {
     // Calculate veto efficiencies
     double muon_veto_eff = total_muons > 0 ? (double)muons_vetoed / total_muons : 0;
     double michel_veto_eff = total_michels > 0 ? (double)michels_vetoed / total_michels : 0;
+    double gamma_veto_eff = total_gamma > 0 ? (double)gamma_vetoed / total_gamma : 0;
     double signal_retention = total_nue > 0 ? (double)nue_passing_veto / total_nue : 0;
     double false_veto_rate = total_untagged > 0 ? (double)untagged_vetoed / total_untagged : 0;
     
@@ -1009,6 +1052,9 @@ int main(int argc, char *argv[]) {
     cout << "Total Michels: " << total_michels << endl;
     cout << "Michels Vetoed: " << michels_vetoed << endl;
     cout << "Michel Veto Efficiency: " << michel_veto_eff * 100 << "%" << endl;
+    cout << "Total Gamma-like: " << total_gamma << endl;
+    cout << "Gamma-like Vetoed: " << gamma_vetoed << endl;
+    cout << "Gamma Veto Efficiency: " << gamma_veto_eff * 100 << "%" << endl;
     cout << "Total νₑ Candidates: " << total_nue << endl;
     cout << "νₑ Passing Veto: " << nue_passing_veto << endl;
     cout << "Signal Retention Efficiency: " << signal_retention * 100 << "%" << endl;
@@ -1026,209 +1072,184 @@ int main(int argc, char *argv[]) {
     gStyle->SetOptStat(1111);
     gStyle->SetOptFit(111);
     
-    // Muon and Michel plots
+    // Gamma-like events plot
     c->Clear();
-    hMyMuonEnergy->SetLineColor(kBlue);
-    hMyMuonEnergy->Draw();
+    h_gamma_energy->SetLineColor(kMagenta);
+    h_gamma_energy->SetTitle("Gamma-like Events;Energy (p.e.);Events");
+    h_gamma_energy->Draw();
     c->Update();
-    string plotName = OUTPUT_DIR + "/Muon_Energy_Michel.png";
+    string plotName = OUTPUT_DIR + "/Gamma_Energy.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
+    // Muon energy spectrum
+    c->Clear();
+    hMyMuonEnergy->SetLineColor(kBlue);
+    hMyMuonEnergy->SetTitle("Muon Energy Spectrum;Energy (p.e.);Counts");
+    hMyMuonEnergy->Draw();
+    c->Update();
+    plotName = OUTPUT_DIR + "/Muon_Energy.png";
+    c->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Michel electron energy
     c->Clear();
     hMyMichelEnergy->SetLineColor(kRed);
+    hMyMichelEnergy->SetTitle("Michel Electron Energy;Energy (p.e.);Counts");
     hMyMichelEnergy->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Michel_Energy.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
-    // Michel No Muon plot
+
+    // Michel no muon
     c->Clear();
     hMichelNoMuon->SetLineColor(kRed);
+    hMichelNoMuon->SetTitle("Michel Candidates (No Muon Tag);Energy (p.e.);Counts");
     hMichelNoMuon->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Michel_NoMuon.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
-    // Isolated Non-Vetoed plot
+
+    // Isolated non-vetoed events
     c->Clear();
     hIsolatedNonVetoed->SetLineColor(kBlue);
+    hIsolatedNonVetoed->SetTitle("Isolated Non-Vetoed Events;Energy (p.e.);Counts");
     hIsolatedNonVetoed->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Isolated_NonVetoed.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
     // Time since last muon for all events
     c->Clear();
     h_dt_all->SetLineColor(kBlack);
-    h_dt_all->GetXaxis()->SetTitle("Time Since Last Muon (#mus)");
+    h_dt_all->SetTitle("Time to Last Muon;dt (#mus);Events");
     h_dt_all->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/TimeSinceLastMuon.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
     // Michel time difference
     c->Clear();
     hMyDtMichel->SetMarkerStyle(20);
     hMyDtMichel->SetMarkerSize(1.0);
-    hMyDtMichel->GetXaxis()->SetTitle("Time to Previous Muon (#mus)");
+    hMyDtMichel->SetTitle("Muon-Michel Time Difference;Time (#mus);Counts");
     hMyDtMichel->Draw("P");
     if (hMyDtMichel->GetEntries() > 5) {
-        double integral = hMyDtMichel->Integral(hMyDtMichel->FindBin(FIT_MIN), hMyDtMichel->FindBin(FIT_MAX));
-        double bin_width = hMyDtMichel->GetBinWidth(1);
-        double N0_init = integral * bin_width / (FIT_MAX - FIT_MIN);
-        double C_init = 0;
-        int bin_14 = hMyDtMichel->FindBin(14.0);
-        int bin_16 = hMyDtMichel->FindBin(16.0);
-        double min_content = 1e9;
-        for (int i = bin_14; i <= bin_16; i++) {
-            double content = hMyDtMichel->GetBinContent(i);
-            if (content > 0 && content < min_content) {
-                min_content = content;
-            }
-        }
-        if (min_content < 1e9) {
-            C_init = min_content;
-        } else {
-            C_init = 0.1;
-        }
         TF1 *expFit = new TF1("expFit", ExpFit, FIT_MIN, FIT_MAX, 3);
-        expFit->SetParameters(N0_init, 2.2, C_init);
-        expFit->SetParLimits(0, 0, N0_init * 100);
-        expFit->SetParLimits(1, 0.1, 20.0);
-        expFit->SetParLimits(2, -C_init * 10, C_init * 10);
-        expFit->SetParNames("N_{0}", "#tau", "C");
-        expFit->SetNpx(1000);
-        int fitStatus = hMyDtMichel->Fit(expFit, "RE", "", FIT_MIN, FIT_MAX);
-        expFit->SetLineColor(kGreen);
-        expFit->SetLineWidth(3);
+        expFit->SetParameters(100, 2.2, 10);
+        hMyDtMichel->Fit(expFit, "R");
         expFit->Draw("same");
-        gPad->Update();
-        TPaveStats* stats = (TPaveStats*)hMyDtMichel->FindObject("stats");
-        if (!stats) {
-            stats = new TPaveStats(0.6, 0.6, 0.9, 0.9, "brNDC");
-            stats->SetName("stats");
-            stats->Draw();
-            hMyDtMichel->GetListOfFunctions()->Add(stats);
-        }
-        stats->SetTextColor(kRed);
-        stats->SetX1NDC(0.6);
-        stats->SetX2NDC(0.9);
-        stats->SetY1NDC(0.6);
-        stats->SetY2NDC(0.9);
-        stats->Clear();
-        stats->AddText("DeltaT");
-        stats->AddText(Form("#tau = %.4f #pm %.4f #mus", expFit->GetParameter(1), expFit->GetParError(1)));
-        stats->AddText(Form("#chi^{2}/NDF = %.4f", expFit->GetChisquare() / expFit->GetNDF()));
-        stats->AddText(Form("N_{0} = %.1f #pm %.1f", expFit->GetParameter(0), expFit->GetParError(0)));
-        stats->AddText(Form("C = %.1f #pm %.1f", expFit->GetParameter(2), expFit->GetParError(2)));
-        stats->Draw();
-        gPad->Update();
-        delete expFit;
     }
     c->Update();
-    c->Modified();
-    c->RedrawAxis();
-    plotName = OUTPUT_DIR + "/Michel_dt.png";
+    plotName = OUTPUT_DIR + "/Michel_TimeDifference.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
     // Michel energy vs time difference
     c->Clear();
     hMyEnergyVsDt->SetStats(0);
-    hMyEnergyVsDt->GetXaxis()->SetTitle("dt (#mus)");
-    hMyEnergyVsDt->GetXaxis()->SetRangeUser(0, MICHEL_DT_MAX);
-    hMyEnergyVsDt->GetYaxis()->SetRangeUser(0, 1000);
+    hMyEnergyVsDt->SetTitle("Michel Energy vs Time Difference;dt (#mus);Energy (p.e.)");
     hMyEnergyVsDt->Draw("COLZ");
     c->Update();
     plotName = OUTPUT_DIR + "/Michel_Energy_vs_dt.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
-    // Trigger bits
+
+    // Trigger bits distribution
     c->Clear();
     hMyTriggerBits->SetLineColor(kGreen);
+    hMyTriggerBits->SetTitle("Trigger Bits Distribution;Trigger Bits;Counts");
     hMyTriggerBits->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/TriggerBits_Distribution.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
-    // νₑ signal and background plots
+
+    // νₑ signal energy
     c->Clear();
     hMyNueEnergy->SetLineColor(kBlue);
+    hMyNueEnergy->SetTitle("#nu_{e} + d Signal Energy;Energy (p.e.);Counts");
     hMyNueEnergy->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_Signal_Energy.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
+    // νₑ time difference
     c->Clear();
     hMyNueDt->SetLineColor(kBlue);
+    hMyNueDt->SetTitle("#nu_{e} Time Difference;Time to Beam (#mus);Counts");
     hMyNueDt->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_dt.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
+    // νₑ PMT hits
     c->Clear();
     hMyNuePmtHits->SetLineColor(kBlue);
+    hMyNuePmtHits->SetTitle("#nu_{e} PMT Hits;Number of PMTs;Counts");
     hMyNuePmtHits->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_PMT_Hits.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
+    // νₑ energy vs time difference
     c->Clear();
     hMyNueEnergyVsDt->SetStats(0);
-    hMyNueEnergyVsDt->GetXaxis()->SetTitle("dt (#mus)");
-    hMyNueEnergyVsDt->GetXaxis()->SetRangeUser(0, 12);
-    hMyNueEnergyVsDt->GetYaxis()->SetRangeUser(0, 1500);
+    hMyNueEnergyVsDt->SetTitle("#nu_{e} Energy vs Time Difference;dt (#mus);Energy (p.e.)");
     hMyNueEnergyVsDt->Draw("COLZ");
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_Energy_vs_dt.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
+    // νₑ background energy
     c->Clear();
     hMyNueBkgEnergy->SetLineColor(kMagenta);
+    hMyNueBkgEnergy->SetTitle("#nu_{e} Non-Candidate Background;Energy (p.e.);Counts");
     hMyNueBkgEnergy->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_NonCandidate_Background.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
-    // νₑ + O background plots
+
+    // νₑ + O background energy
     c->Clear();
     hMyNueOxygenEnergy->SetLineColor(kRed);
-    hMyNueOxygenEnergy->SetLineWidth(2);
+    hMyNueOxygenEnergy->SetTitle("#nu_{e} + O Background Energy;Energy (p.e.);Counts");
     hMyNueOxygenEnergy->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_Oxygen_Background.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
+    // νₑ + O time difference
     c->Clear();
     hMyNueOxygenDt->SetLineColor(kRed);
+    hMyNueOxygenDt->SetTitle("#nu_{e} + O Time Difference;Time to Beam (#mus);Counts");
     hMyNueOxygenDt->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_Oxygen_dt.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
+
+    // νₑ + O PMT hits
     c->Clear();
     hMyNueOxygenPmtHits->SetLineColor(kRed);
+    hMyNueOxygenPmtHits->SetTitle("#nu_{e} + O PMT Hits;Number of PMTs;Counts");
     hMyNueOxygenPmtHits->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/Nue_Oxygen_PMT_Hits.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
-    
-    // SiPM energy comparison
+
+    // SiPM energy comparison: νₑ signal vs background
     c->Clear();
     hMyNueSiPM->SetLineColor(kBlue);
     hMyNueOxygenSiPM->SetLineColor(kRed);
@@ -1244,7 +1265,7 @@ int main(int argc, char *argv[]) {
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
     delete leg_sipm;
-    
+
     // PMT variance comparison
     c->Clear();
     h_pmt_variance_nue->SetLineColor(kBlue);
@@ -1261,7 +1282,7 @@ int main(int argc, char *argv[]) {
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
     delete leg_variance;
-    
+
     // Pulse timing variance comparison
     c->Clear();
     h_pulse_variance_nue->SetLineColor(kBlue);
@@ -1278,7 +1299,7 @@ int main(int argc, char *argv[]) {
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
     delete leg_pulse;
-    
+
     // Comparison plot of signal and background
     c->Clear();
     hMyNueEnergy->SetLineColor(kBlue);
@@ -1301,10 +1322,11 @@ int main(int argc, char *argv[]) {
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
     delete leg_nue;
-    
+
     // Cosmic and SiPM plots
     c->Clear();
     h_sipm_cosmic->SetLineColor(kGreen);
+    h_sipm_cosmic->SetTitle("SiPM Energy for Cosmic Events;SiPM Energy (ADC);Events");
     h_sipm_cosmic->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/SiPM_Energy_Cosmic.png";
@@ -1313,6 +1335,7 @@ int main(int argc, char *argv[]) {
     
     c->Clear();
     h_sipm_tagged->SetLineColor(kRed);
+    h_sipm_tagged->SetTitle("SiPM Energy for Tagged Events;SiPM Energy (ADC);Events");
     h_sipm_tagged->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/SiPM_Energy_Tagged.png";
@@ -1321,6 +1344,7 @@ int main(int argc, char *argv[]) {
     
     c->Clear();
     h_sipm_gamma_cosmic->SetLineColor(kMagenta);
+    h_sipm_gamma_cosmic->SetTitle("SiPM Energy for Gamma-like Cosmic Events;SiPM Energy (ADC);Events");
     h_sipm_gamma_cosmic->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/SiPM_Energy_Gamma_Cosmic.png";
@@ -1330,6 +1354,7 @@ int main(int argc, char *argv[]) {
     // SiPM energy for untagged events
     c->Clear();
     h_sipm_untagged->SetLineColor(kBlack);
+    h_sipm_untagged->SetTitle("SiPM Energy for Untagged Events;SiPM Energy (ADC);Events");
     h_sipm_untagged->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/SiPM_Energy_Untagged.png";
@@ -1550,6 +1575,7 @@ int main(int argc, char *argv[]) {
     h_sipm_cosmic->Write();
     h_sipm_tagged->Write();
     h_sipm_gamma_cosmic->Write();
+    h_gamma_energy->Write();
     h_pmt_variance_nue->Write();
     h_pmt_variance_oxygen->Write();
     h_pulse_variance_nue->Write();
@@ -1603,6 +1629,7 @@ int main(int argc, char *argv[]) {
     delete h_sipm_cosmic;
     delete h_sipm_tagged;
     delete h_sipm_gamma_cosmic;
+    delete h_gamma_energy;
     delete h_pmt_variance_nue;
     delete h_pmt_variance_oxygen;
     delete h_pulse_variance_nue;
@@ -1615,8 +1642,6 @@ int main(int argc, char *argv[]) {
         delete h_pmt_energy_all_pmt[i];
         delete h_pmt_energy_veto_pass_pmt[i];
     }
-    delete leg_veto;
-    delete leg_categories;
     
     return 0;
 }
