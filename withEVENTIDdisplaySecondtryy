@@ -35,7 +35,7 @@ const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
 const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
 const int ADCSIZE = 45;                 // Number of ADC samples per waveform
-const std::string OUTPUT_DIR = "gfg"; // Output directory
+const std::string OUTPUT_DIR = "okaynew"; // Output directory
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 10.0; // Fit range max (µs)
 const double MUON_VETO_WINDOW = 16.0; // Time window for muon veto (µs)
@@ -64,7 +64,7 @@ const double NUE_DT_MAX = 5.0;          // Max time after beam for νₑ (µs)
 const double PMT_VARIANCE_MAX = 100;    // Max variance in PMT energies (p.e.^2)
 const double PULSE_VARIANCE_MAX = 2 * 16.0 / 1000.0; // Max pulse timing variance (µs)
 
-const double COSMIC_SIPM_THRESHOLD = 30; // SiPM threshold for cosmic events (ADC)
+const double COSMIC_SIPM_THRESHOLD = 30; // SiPM threshold for gamma-like events (ADC)
 const double UNTAGGED_SIPM_THRESHOLD = 30.0; // SiPM threshold for untagged events (ADC)
 const double UNTAGGED_ENERGY_MAX = 1500;  // Max PMT energy for untagged (p.e.)
 const int UNTAGGED_PMT_MIN = 4;         // Min PMT hits for untagged
@@ -181,10 +181,10 @@ bool is_sipm_low(const std::vector<double>& sipm_energies) {
             return false;
         }
     }
-    return !(sipm_energies[8] > TOP_SIPM_THRESHOLD || sipm_energies[9] > TOP_SIPM_THREShOLD);
+    return !(sipm_energies[8] > TOP_SIPM_THRESHOLD || sipm_energies[9] > TOP_SIPM_THRESHOLD);
 }
 
-bool is_sipm_hit_cosmic(const std::vector<double>& sipm_energies) {
+bool is_sipm_hit_gamma(const std::vector<double>& sipm_energies) {
     for (size_t i = 0; i < sipm_energies.size(); i++) {
         if (sipm_energies[i] > COSMIC_SIPM_THRESHOLD) {
             return true;
@@ -204,7 +204,7 @@ bool is_sipm_hit_untagged(const std::vector<double>& sipm_energies) {
 
 bool is_gamma_like_event(const myPulse& p, const std::vector<double>& sipm_energies) {
     return p.energy > 20 && p.energy < GAMMA_ENERGY_MAX &&
-           is_sipm_hit_cosmic(sipm_energies) && 
+           is_sipm_hit_gamma(sipm_energies) && 
            !is_sipm_hit_muon(sipm_energies) &&
            p.pmt_variance < 50;
 }
@@ -222,7 +222,8 @@ bool is_michel_event(const myPulse& p, const std::vector<double>& sipm_energies,
            p.number >= MICHEL_PMT_MIN &&
            is_sipm_low(sipm_energies) &&
            !(p.trigger == 1 || p.trigger == 4 || p.trigger == 8 || p.trigger == 16) &&
-           (p.start - p.last_mu) < MUON_VETO_WINDOW;
+           (p.start - p.last_mu) < MUON_VETO_WINDOW &&
+           !p.beam; // Ensure not beam event
 }
 
 bool is_nue_event(const myPulse& p, double beam_dt, const std::vector<double>& sipm_energies) {
@@ -239,16 +240,18 @@ bool is_nue_event(const myPulse& p, double beam_dt, const std::vector<double>& s
            p.pmt_variance < PMT_VARIANCE_MAX &&
            !p.is_muon &&
            !p.is_michel &&
-           !p.is_gamma;
+           !p.is_gamma &&
+           p.beam; // Ensure beam event
 }
 
-bool is_cosmic_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    return (p.is_muon || p.is_michel || is_sipm_hit_cosmic(sipm_energies) || 
-           is_gamma_like_event(p, sipm_energies));
+// Updated cosmic event selection
+bool is_cosmic_event(const myPulse& p) {
+    return !p.beam && 
+           !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16); // Exclude external triggers
 }
 
 bool is_tagged_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    return (is_sipm_hit_cosmic(sipm_energies) || p.is_muon || p.is_michel || p.is_gamma);
+    return (p.is_muon || p.is_michel || p.is_gamma);
 }
 
 bool is_untagged_event(const myPulse& p, const std::vector<double>& sipm_energies, double beam_dt, bool pulse_at_end) {
@@ -883,8 +886,8 @@ int main(int argc, char *argv[]) {
                 }
             }
             
-            // Cosmic selection
-            if (is_cosmic_event(p, sipm_energies)) {
+            // Cosmic selection - updated definition
+            if (is_cosmic_event(p)) {
                 h_pmt_energy_cosmic->Fill(p.energy);
                 h_sipm_cosmic->Fill(p.all_sipm_energy);
                 
