@@ -60,11 +60,11 @@ void lowlight(const char *fileName, int EventID) {
 
     tree->GetEntry(EventID); // Load the specified event
 
-    // Find min and max ADC values across all channels for samples 22-40
+    // Find min and max ADC values across all channels for all 45 samples
     double maxADC = 0;
     double minADC = 0;
     for (int i = 0; i < 23; i++) {
-        for (int k = 21; k < 40; k++) { // Samples 22-40 (0-based: 21-39)
+        for (int k = 0; k < 45; k++) { // All samples (0-44)
             if (adcVal[i][k] > maxADC) maxADC = adcVal[i][k];
             if (adcVal[i][k] < minADC) minADC = adcVal[i][k];
         }
@@ -87,27 +87,27 @@ void lowlight(const char *fileName, int EventID) {
     }
 
     // Create single canvas for all waveforms
-    TCanvas *canvas = new TCanvas("SingleCanvas", Form("Peak Waveforms for Muon Event ", EventID), 1200, 600);
+    TCanvas *canvas = new TCanvas("SingleCanvas", Form("Waveforms for Cosmic Event %d", EventID), 1200, 600);
     TMultiGraph *multiGraph = new TMultiGraph();
-    multiGraph->SetTitle(Form("Peak Waveforms for Muon Event;Sample Index;ADC Value (mV)", EventID));
+    multiGraph->SetTitle(Form("Waveforms for Cosmic Event %d;Sample Index;ADC Value (mV)", EventID));
 
-    TLegend *legend = new TLegend(0.85, 0.15, 0.95, 0.85); // Narrower legend
+    TLegend *legend = new TLegend(0.90, 0.15, 0.99, 0.85); // Adjusted to right edge
     legend->SetBorderSize(1);
     legend->SetTextSize(0.025);
 
-    const int samplesPerWaveform = 19; // Samples 22-40 (21-39 in 0-based indexing)
+    const int samplesPerWaveform = 45; // All 45 samples
     const int horizontalSpacing = 5; // Gap between waveforms
     int currentXOffset = 0; // Starting x-coordinate
 
-    // Plot PMT waveforms (samples 22-40)
+    // Plot PMT waveforms (all 45 samples)
     for (int i = 0; i < 12; i++) {
         TGraph *graph = new TGraph();
         int adcIndex = pmtChannelMap[i];
-        for (int k = 21; k < 40; k++) { // Samples 22-40
-            int sampleIndex = k - 21; // Normalize to 0-based for this waveform
+        for (int k = 0; k < 45; k++) { // All samples (0-44)
+            int sampleIndex = k; // Normalize to 0-based for this waveform
             double x = currentXOffset + sampleIndex; // Sequential x-coordinate
             double adcValue = adcVal[adcIndex][k];
-            graph->SetPoint(k - 21, x, adcValue);
+            graph->SetPoint(k, x, adcValue);
         }
         graph->SetLineColor(pmtColors[i]);
         graph->SetLineWidth(2);
@@ -116,15 +116,15 @@ void lowlight(const char *fileName, int EventID) {
         currentXOffset += samplesPerWaveform + horizontalSpacing; // Shift for next waveform
     }
 
-    // Plot SiPM waveforms (samples 22-40)
+    // Plot SiPM waveforms (all 45 samples)
     for (int i = 0; i < 10; i++) {
         TGraph *graph = new TGraph();
         int adcIndex = sipmChannelMap[i];
-        for (int k = 21; k < 40; k++) { // Samples 22-40
-            int sampleIndex = k - 21; // Normalize to 0-based for this waveform
+        for (int k = 0; k < 45; k++) { // All samples (0-44)
+            int sampleIndex = k; // Normalize to 0-based for this waveform
             double x = currentXOffset + sampleIndex; // Sequential x-coordinate
             double adcValue = adcVal[adcIndex][k];
-            graph->SetPoint(k - 21, x, adcValue);
+            graph->SetPoint(k, x, adcValue);
         }
         graph->SetLineColor(sipmColors[i]);
         graph->SetLineWidth(2);
@@ -136,7 +136,7 @@ void lowlight(const char *fileName, int EventID) {
     // Draw the multi-graph
     multiGraph->Draw("AL");
     multiGraph->GetXaxis()->SetTitle("Sample Index");
-    multiGraph->GetYaxis()->SetTitle("ADC Value ");
+    multiGraph->GetYaxis()->SetTitle("ADC Value (mV)");
     multiGraph->GetXaxis()->SetRangeUser(0, currentXOffset - horizontalSpacing);
     multiGraph->GetYaxis()->SetRangeUser(minADC, maxADC);
 
@@ -144,11 +144,11 @@ void lowlight(const char *fileName, int EventID) {
     legend->Draw();
 
     // Save the plot
-    TString plotFileName = Form("%s/PeakWaveforms_Event%d.png", dirName.Data(), EventID);
+    TString plotFileName = Form("%s/Waveforms_Event%d.png", dirName.Data(), EventID);
     canvas->SaveAs(plotFileName);
-    cout << "Peak waveforms plot saved as " << plotFileName << endl;
+    cout << "Waveforms plot saved as " << plotFileName << endl;
 
-    // Clean up (TMultiGraph owns TGraphs, so no need to delete them individually)
+    // Clean up
     delete multiGraph;
     delete legend;
     delete canvas;
