@@ -35,14 +35,13 @@ const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
 const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
 const int ADCSIZE = 45;                 // Number of ADC samples per waveform
-const std::string OUTPUT_DIR = "okaynew"; // Output directory
+const std::string OUTPUT_DIR = "GOODRESULT"; // Output directory
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 10.0; // Fit range max (µs)
 const double MUON_VETO_WINDOW = 16.0; // Time window for muon veto (µs)
 
 // Event selection thresholds
 const double MUON_ENERGY_THRESHOLD = 50; // Min PMT energy for muon (p.e.)
-const double GAMMA_ENERGY_MAX = 45;      // Max energy for gamma-like events
 const std::vector<double> SIDE_SIPM_THRESHOLDS = {750, 950, 1200, 1375, 525, 700, 700, 500}; // Channels 12-19 (ADC)
 const double TOP_SIPM_THRESHOLD = 450; // Channels 20-21 (ADC)
 
@@ -67,8 +66,9 @@ const double PULSE_VARIANCE_MAX = 2 * 16.0 / 1000.0; // Max pulse timing varianc
 const double COSMIC_SIPM_THRESHOLD = 30; // SiPM threshold for gamma-like events (ADC)
 const double UNTAGGED_SIPM_THRESHOLD = 30.0; // SiPM threshold for untagged events (ADC)
 const double UNTAGGED_ENERGY_MAX = 1500;  // Max PMT energy for untagged (p.e.)
-const int UNTAGGED_PMT_MIN = 4;         // Min PMT hits for untagged
+const int UNTAGGED_PMT_MIN = 3;         // Min PMT hits for untagged
 const int UNTAGGED_PMT_MAX = 12;         // Max PMT hits for untagged
+const double UNTAGGED_MIN_ENERGY = 2.0;  // Min PMT energy for untagged (p.e.)
 
 // Pulse structure
 struct myPulse {
@@ -88,6 +88,8 @@ struct myPulse {
     bool is_michel;        // Michel electron candidate flag
     bool is_nue;           // νₑ candidate flag
     bool is_gamma;         // Gamma-like event flag
+    bool is_tagged;        // Tagged cosmic event flag
+    bool is_untagged;      // Untagged cosmic event flag
     std::vector<double> pmt_energies; // Per-PMT energies (p.e.)
     double pmt_variance;   // Variance of PMT energies
 };
@@ -202,9 +204,9 @@ bool is_sipm_hit_untagged(const std::vector<double>& sipm_energies) {
     return false;
 }
 
+// UPDATED: Gamma-like events without energy requirement
 bool is_gamma_like_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    return p.energy > 20 && p.energy < GAMMA_ENERGY_MAX &&
-           is_sipm_hit_gamma(sipm_energies) && 
+    return is_sipm_hit_gamma(sipm_energies) && 
            !is_sipm_hit_muon(sipm_energies) &&
            p.pmt_variance < 50;
 }
@@ -244,42 +246,43 @@ bool is_nue_event(const myPulse& p, double beam_dt, const std::vector<double>& s
            p.beam; // Ensure beam event
 }
 
-// Updated cosmic event selection
-bool is_cosmic_event(const myPulse& p) {
+// Base cosmic event definition
+bool is_base_cosmic(const myPulse& p) {
     return !p.beam && 
-           !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16); // Exclude external triggers
+           !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
 }
 
+// Tagged event definition
 bool is_tagged_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    return (p.is_muon || p.is_michel || p.is_gamma);
+    return (p.is_muon || p.is_michel || p.is_gamma) &&
+           !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
 }
 
-bool is_untagged_event(const myPulse& p, const std::vector<double>& sipm_energies, double beam_dt, bool pulse_at_end) {
-    // Explicitly exclude all known event types
+// Updated untagged event definition with 2 p.e. threshold
+bool is_untagged_event(const myPulse& p, const std::vector<double>& sipm_energies, bool pulse_at_end) {
+    // Must be base cosmic
+    if (!is_base_cosmic(p)) {
+        return false;
+    }
+    
+    // Exclude tagged events
     if (p.is_michel || p.is_muon || p.is_gamma) {
         return false;
     }
     
-    bool is_non_muon_low_energy = p.energy <= UNTAGGED_ENERGY_MAX && 
-                                 !pulse_at_end && 
-                                 !is_sipm_hit_untagged(sipm_energies);
-    
-    return p.trigger == 2 &&
+    // PMT activity cuts
+    return p.energy > UNTAGGED_MIN_ENERGY &&  // 2 p.e. threshold
+           p.energy <= UNTAGGED_ENERGY_MAX && 
+           !pulse_at_end && 
            !is_sipm_hit_untagged(sipm_energies) &&
            p.number >= UNTAGGED_PMT_MIN &&
-           p.number <= UNTAGGED_PMT_MAX &&
-           is_non_muon_low_energy &&
-           !p.beam;
+           p.number <= UNTAGGED_PMT_MAX;
 }
 
-bool is_veto_passing_event(const myPulse& p, const std::vector<double>& sipm_energies) {
-    return !p.is_muon &&
-           !p.is_michel &&
-           !p.is_gamma &&
-           is_sipm_low(sipm_energies) &&
-           p.number >= 1 &&
-           p.energy > 1 &&
-           p.trigger == 2;
+// Clean cosmic event = tagged + untagged
+bool is_clean_cosmic(const myPulse& p, const std::vector<double>& sipm_energies, bool pulse_at_end) {
+    return is_tagged_event(p, sipm_energies) || 
+           is_untagged_event(p, sipm_energies, pulse_at_end);
 }
 
 // SPE calibration function
@@ -487,6 +490,8 @@ int main(int argc, char *argv[]) {
     int tagged_veto_pass = 0, tagged_veto_fail = 0;
     int untagged_veto_pass = 0;
     int num_gamma_cosmic = 0;
+    int num_clean_cosmic = 0;
+    int num_unclassified = 0;
     std::map<int, int> trigger_counts;
     std::vector<double> beam_pulse_times;
     
@@ -521,7 +526,7 @@ int main(int argc, char *argv[]) {
     // Additional histograms for analysis
     TH1D* h_pmt_energy_all = new TH1D("pmt_energy_all", "PMT Energy for All Events;Energy (p.e.);Events", 100, 0, 3000);
     TH1D* h_pmt_energy_after_veto = new TH1D("pmt_energy_after_veto", "PMT Energy After Veto;Energy (p.e.);Events", 100, 0, 3000);
-    TH1D* h_pmt_energy_cosmic = new TH1D("pmt_energy_cosmic", "PMT Energy for Cosmic Events;Energy (p.e.);Events", 100, 0, 3000);
+    TH1D* h_pmt_energy_cosmic = new TH1D("pmt_energy_cosmic", "PMT Energy for Clean Cosmic Events;Energy (p.e.);Events", 100, 0, 3000);
     TH1D* h_pmt_energy_untagged = new TH1D("pmt_energy_untagged", "PMT Energy for Untagged Events;Energy (p.e.);Events", 100, 0, 1500);
     TH1D* h_pmt_energy_tagged = new TH1D("pmt_energy_tagged", "PMT Energy for Tagged Events;Energy (p.e.);Events", 100, 0, 3000);
     TH1D* h_pmt_energy_veto_pass = new TH1D("pmt_energy_veto_pass", "PMT Energy for Veto-Passing Events;Energy (p.e.);Events", 100, 0, 3000);
@@ -647,6 +652,8 @@ int main(int argc, char *argv[]) {
             p.is_michel = false;
             p.is_nue = false;
             p.is_gamma = false;
+            p.is_tagged = false;
+            p.is_untagged = false;
             p.pmt_energies = std::vector<double>(N_PMTS, 0.0);
             p.pmt_variance = 0;
             std::vector<double> all_chan_start, all_chan_end, all_chan_peak, all_chan_energy;
@@ -761,14 +768,11 @@ int main(int argc, char *argv[]) {
                 no_event61 = false;
             }
             
-            // Gamma-like event selection
+            // Gamma-like event selection - UPDATED WITHOUT ENERGY REQUIREMENT
             p.is_gamma = is_gamma_like_event(p, sipm_energies);
             if (p.is_gamma) {
                 total_gamma++;
                 h_gamma_energy->Fill(p.energy);
-                if (!is_veto_passing_event(p, sipm_energies)) {
-                    gamma_vetoed++;
-                }
                 if (gamma_events.size() < MAX_EVENTS_TO_PRINT) {
                     gamma_events.push_back({inputFileName, eventID});
                 }
@@ -781,9 +785,6 @@ int main(int argc, char *argv[]) {
                 num_muons++;
                 muon_candidates.emplace_back(p.start, p.energy);
                 total_muons++;
-                if (!is_veto_passing_event(p, sipm_energies)) {
-                    muons_vetoed++;
-                }
                 
                 if (muon_events.size() < MAX_EVENTS_TO_PRINT) {
                     muon_events.push_back({inputFileName, eventID});
@@ -797,9 +798,6 @@ int main(int argc, char *argv[]) {
                 p.is_michel = true;
                 num_michels++;
                 total_michels++;
-                if (dt <= MUON_VETO_WINDOW) {
-                    michels_vetoed++;
-                }
                 michel_muon_times.insert(last_muon_time);
                 hMyMichelEnergy->Fill(p.energy);
                 
@@ -814,12 +812,6 @@ int main(int argc, char *argv[]) {
             if (is_michel_for_dt) {
                 hMyDtMichel->Fill(dt);
                 hMyEnergyVsDt->Fill(dt, p.energy);
-            }
-            
-            if (is_veto_passing_event(p, sipm_energies)) {
-                if (last_muon_time == 0 || dt > MUON_VETO_WINDOW) {
-                    hIsolatedNonVetoed->Fill(p.energy);
-                }
             }
             
             // νₑ selection
@@ -847,9 +839,6 @@ int main(int argc, char *argv[]) {
                         p.is_nue = true;
                         num_nue++;
                         total_nue++;
-                        if (is_veto_passing_event(p, sipm_energies)) {
-                            nue_passing_veto++;
-                        }
                         hMyNueEnergy->Fill(p.energy);
                         hMyNueDt->Fill(beam_dt);
                         hMyNuePmtHits->Fill(p.number);
@@ -875,7 +864,51 @@ int main(int argc, char *argv[]) {
                 }
             }
             
-            // All events
+            // Classify tagged and untagged events
+            p.is_tagged = is_tagged_event(p, sipm_energies);
+            p.is_untagged = is_untagged_event(p, sipm_energies, pulse_at_end);
+            
+            // Clean cosmic = tagged + untagged
+            if (p.is_tagged || p.is_untagged) {
+                num_clean_cosmic++;
+                h_pmt_energy_cosmic->Fill(p.energy);
+                h_sipm_cosmic->Fill(p.all_sipm_energy);
+                
+                if (p.is_gamma) {
+                    h_sipm_gamma_cosmic->Fill(p.all_sipm_energy);
+                    num_gamma_cosmic++;
+                }
+                
+                if (cosmic_events.size() < MAX_EVENTS_TO_PRINT) {
+                    cosmic_events.push_back({inputFileName, eventID});
+                }
+            }
+            
+            // Tagged events
+            if (p.is_tagged) {
+                h_pmt_energy_tagged->Fill(p.energy);
+                h_sipm_tagged->Fill(p.all_sipm_energy);
+                
+                if (tagged_events.size() < MAX_EVENTS_TO_PRINT) {
+                    tagged_events.push_back({inputFileName, eventID});
+                }
+            }
+            
+            // Untagged events
+            if (p.is_untagged) {
+                h_pmt_energy_untagged->Fill(p.energy);
+                h_sipm_untagged->Fill(p.all_sipm_energy);
+                h_pmt_hits_untagged->Fill(p.number);
+                h_dt_untagged->Fill(beam_dt);
+                total_num_untagged++;
+                total_untagged++;
+                
+                if (untagged_events.size() < MAX_EVENTS_TO_PRINT) {
+                    untagged_events.push_back({inputFileName, eventID});
+                }
+            }
+            
+            // All events (valid triggers only)
             bool is_valid_trigger = !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
             if (is_valid_trigger) {
                 h_pmt_energy_all->Fill(p.energy);
@@ -886,69 +919,14 @@ int main(int argc, char *argv[]) {
                 }
             }
             
-            // Cosmic selection - updated definition
-            if (is_cosmic_event(p)) {
-                h_pmt_energy_cosmic->Fill(p.energy);
-                h_sipm_cosmic->Fill(p.all_sipm_energy);
-                
-                if (p.is_gamma) {
-                    h_sipm_gamma_cosmic->Fill(p.all_sipm_energy);
-                    num_gamma_cosmic++;
-                }
-                
-                if (is_veto_passing_event(p, sipm_energies)) cosmic_veto_pass++;
-                else cosmic_veto_fail++;
-                
-                if (cosmic_events.size() < MAX_EVENTS_TO_PRINT) {
-                    cosmic_events.push_back({inputFileName, eventID});
-                }
-            }
-            
-            // Tagged selection
-            if (is_tagged_event(p, sipm_energies)) {
-                h_pmt_energy_tagged->Fill(p.energy);
-                h_sipm_tagged->Fill(p.all_sipm_energy);
-                if (is_veto_passing_event(p, sipm_energies)) tagged_veto_pass++;
-                else tagged_veto_fail++;
-                
-                if (tagged_events.size() < MAX_EVENTS_TO_PRINT) {
-                    tagged_events.push_back({inputFileName, eventID});
-                }
-            }
-            
-            // Untagged selection - with explicit checks
-            if (is_untagged_event(p, sipm_energies, beam_dt, pulse_at_end)) {
-                // Additional safeguard
-                if (p.is_michel || p.is_muon || p.is_gamma) {
-                    cout << "ERROR: Wrong classification! EventID: " << eventID 
-                         << " Michel:" << p.is_michel 
-                         << " Muon:" << p.is_muon 
-                         << " Gamma:" << p.is_gamma << endl;
-                    continue;
-                }
-                
-                h_pmt_energy_untagged->Fill(p.energy);
-                h_sipm_untagged->Fill(p.all_sipm_energy);
-                h_pmt_hits_untagged->Fill(p.number);
-                h_dt_untagged->Fill(beam_dt);
-                total_num_untagged++;
-                total_untagged++;
-                if (!is_veto_passing_event(p, sipm_energies)) {
-                    untagged_vetoed++;
-                }
-                if (is_veto_passing_event(p, sipm_energies)) untagged_veto_pass++;
-                
-                if (untagged_events.size() < MAX_EVENTS_TO_PRINT) {
-                    untagged_events.push_back({inputFileName, eventID});
-                }
-            }
-            
             // Veto-passing selection
-            if (is_veto_passing_event(p, sipm_energies)) {
+            if (is_base_cosmic(p) && 
+                !p.is_muon && !p.is_michel && !p.is_gamma &&
+                is_sipm_low(sipm_energies) &&
+                p.number >= 1 && p.energy > 1) {
                 h_pmt_energy_veto_pass->Fill(p.energy);
                 h_pmt_energy_after_veto->Fill(p.energy);
                 h_sipm_veto_pass->Fill(p.all_sipm_energy);
-                h_after_veto_trigger2->Fill(p.energy);
                 for (int pmt = 0; pmt < N_PMTS; ++pmt) {
                     if (p.pmt_energies[pmt] > 0) {
                         h_pmt_energy_veto_pass_pmt[pmt]->Fill(p.pmt_energies[pmt]);
@@ -976,9 +954,8 @@ int main(int argc, char *argv[]) {
         cout << "Gamma-like Events Detected: " << total_gamma << "\n";
         cout << "νₑ + d Signal Events: " << num_nue << "\n";
         cout << "νₑ + O Background Events: " << num_nue_oxygen << "\n";
-        cout << "Gamma Cosmic Events: " << num_gamma_cosmic << "\n";
+        cout << "Clean Cosmic Events (Tagged + Untagged): " << num_clean_cosmic << "\n";
         cout << "Untagged Events: " << total_num_untagged << "\n";
-        cout << "Veto-Passing Events: " << total_num_veto_pass << "\n";
         cout << "------------------------\n";
         f->Close();
         delete f;
@@ -987,7 +964,8 @@ int main(int argc, char *argv[]) {
         num_michels = 0;
         num_nue = 0;
         num_nue_oxygen = 0;
-        num_gamma_cosmic = 0;
+        num_clean_cosmic = 0;
+        total_num_untagged = 0;
         total_gamma = 0;
     }
     
@@ -1014,7 +992,7 @@ int main(int argc, char *argv[]) {
         cout << "  File: " << evt.first << " Event: " << evt.second << endl;
     }
     
-    cout << "\nCosmic Events:\n";
+    cout << "\nClean Cosmic Events:\n";
     for (const auto& evt : cosmic_events) {
         cout << "  File: " << evt.first << " Event: " << evt.second << endl;
     }
@@ -1050,23 +1028,17 @@ int main(int argc, char *argv[]) {
     cout << "------------------------\n";
     cout << "Veto Efficiency Analysis:\n";
     cout << "Total Muons: " << total_muons << endl;
-    cout << "Muons Vetoed: " << muons_vetoed << endl;
     cout << "Muon Veto Efficiency: " << muon_veto_eff * 100 << "%" << endl;
     cout << "Total Michels: " << total_michels << endl;
-    cout << "Michels Vetoed: " << michels_vetoed << endl;
     cout << "Michel Veto Efficiency: " << michel_veto_eff * 100 << "%" << endl;
     cout << "Total Gamma-like: " << total_gamma << endl;
-    cout << "Gamma-like Vetoed: " << gamma_vetoed << endl;
     cout << "Gamma Veto Efficiency: " << gamma_veto_eff * 100 << "%" << endl;
     cout << "Total νₑ Candidates: " << total_nue << endl;
     cout << "νₑ Passing Veto: " << nue_passing_veto << endl;
     cout << "Signal Retention Efficiency: " << signal_retention * 100 << "%" << endl;
     cout << "Total Untagged Events: " << total_untagged << endl;
-    cout << "Untagged Vetoed: " << untagged_vetoed << endl;
     cout << "False Veto Rate: " << false_veto_rate * 100 << "%" << endl;
-    cout << "Cosmic Rejection Efficiency: " << (cosmic_veto_fail / (double)(cosmic_veto_pass + cosmic_veto_fail)) << " (" << cosmic_veto_fail << "/" << (cosmic_veto_pass + cosmic_veto_fail) << ")\n";
-    cout << "Tagged Rejection Efficiency: " << (tagged_veto_fail / (double)(tagged_veto_pass + tagged_veto_fail)) << " (" << tagged_veto_fail << "/" << (tagged_veto_pass + tagged_veto_fail) << ")\n";
-    cout << "Untagged Retention Efficiency: " << (untagged_veto_pass / (double)total_num_untagged) << " (" << untagged_veto_pass << "/" << total_num_untagged << ")\n";
+    cout << "Clean Cosmic Events (Tagged + Untagged): " << num_clean_cosmic << "\n";
     cout << "νₑ + O Background Events: " << hMyNueOxygenEnergy->GetEntries() << "\n";
     cout << "------------------------\n";
     
@@ -1411,10 +1383,10 @@ int main(int argc, char *argv[]) {
     h_pmt_energy_veto_pass->Draw("SAME HIST");
     gPad->SetLogy();
     TLegend* leg_categories = new TLegend(0.4, 0.75, 0.6, 0.85);
-    leg_categories->AddEntry(h_pmt_energy_cosmic, "Cosmic Events", "l");
+    leg_categories->AddEntry(h_pmt_energy_cosmic, "Clean Cosmic Events", "l");
     leg_categories->AddEntry(h_pmt_energy_tagged, "Tagged Events", "l");
     leg_categories->AddEntry(h_pmt_energy_untagged, "Untagged Events", "l");
-    leg_categories->AddEntry(h_pmt_energy_veto_pass, "Passing veto Cut", "l");
+    leg_categories->AddEntry(h_pmt_energy_veto_pass, "Passing Veto Cut", "l");
     leg_categories->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/PMT_Energy_Categories.png";
