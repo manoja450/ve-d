@@ -35,7 +35,7 @@ const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int EVBF_THRESHOLD = 1000;    // Beam on if channel 22 > this (ADC)
 const double BEAM_TIME_CORRECTION = 2.2; // Beam delay after EVBF (µs)
 const int ADCSIZE = 45;                 // Number of ADC samples per waveform
-const std::string OUTPUT_DIR = "GOODRESULT"; // Output directory
+const std::string OUTPUT_DIR = "GOODRESULT19529"; // Output directory
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 10.0; // Fit range max (µs)
 const double MUON_VETO_WINDOW = 16.0; // Time window for muon veto (µs)
@@ -204,11 +204,10 @@ bool is_sipm_hit_untagged(const std::vector<double>& sipm_energies) {
     return false;
 }
 
-// UPDATED: Gamma-like events without energy requirement
+// Gamma-like events without energy requirement
 bool is_gamma_like_event(const myPulse& p, const std::vector<double>& sipm_energies) {
     return is_sipm_hit_gamma(sipm_energies) && 
-           !is_sipm_hit_muon(sipm_energies) &&
-           p.pmt_variance < 50;
+           !is_sipm_hit_muon(sipm_energies);
 }
 
 bool is_muon_event(const myPulse& p, const std::vector<double>& sipm_energies) {
@@ -258,7 +257,7 @@ bool is_tagged_event(const myPulse& p, const std::vector<double>& sipm_energies)
            !(p.trigger == 4 || p.trigger == 8 || p.trigger == 16);
 }
 
-// Updated untagged event definition with 2 p.e. threshold
+//  untagged event definition with 2 p.e. threshold
 bool is_untagged_event(const myPulse& p, const std::vector<double>& sipm_energies, bool pulse_at_end) {
     // Must be base cosmic
     if (!is_base_cosmic(p)) {
@@ -479,28 +478,19 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < N_PMTS; i++) {
         cout << "PMT " << i + 1 << ": mu1 = " << mu1[i] << " ± " << mu1_err[i] << " ADC counts/p.e.\n";
     }
-    int num_events = 0;
-    int num_muons = 0;
-    int num_michels = 0;
-    int num_nue = 0;
-    int num_nue_oxygen = 0;
-    int total_num_untagged = 0;
-    int total_num_veto_pass = 0;
-    int cosmic_veto_pass = 0, cosmic_veto_fail = 0;
-    int tagged_veto_pass = 0, tagged_veto_fail = 0;
-    int untagged_veto_pass = 0;
-    int num_gamma_cosmic = 0;
-    int num_clean_cosmic = 0;
-    int num_unclassified = 0;
+    // Global counters
+    long total_global_events = 0;
+    long total_global_muons = 0;
+    long total_global_michels = 0;
+    long total_global_gammas = 0;
+    long total_global_nue = 0;
+    long total_global_nue_oxygen = 0;
+    long total_global_clean_cosmic = 0;
+    long total_global_untagged = 0;
+    long total_global_after_veto = 0;
+    
     std::map<int, int> trigger_counts;
     std::vector<double> beam_pulse_times;
-    
-    // Veto efficiency counters
-    int total_muons = 0, muons_vetoed = 0;
-    int total_michels = 0, michels_vetoed = 0;
-    int total_nue = 0, nue_passing_veto = 0;
-    int total_untagged = 0, untagged_vetoed = 0;
-    int total_gamma = 0, gamma_vetoed = 0;
     
     // Main histograms
     TH1D* hMyMuonEnergy = new TH1D("muon_energy", "Muon Energy Spectrum;Energy (p.e.);Counts/100 p.e.", 550, -500, 5000);
@@ -546,12 +536,6 @@ int main(int argc, char *argv[]) {
     TH1D* h_pmt_variance_oxygen = new TH1D("pmt_variance_oxygen", "PMT Energy Variance for #nu_{e} + O;Variance (p.e.^2);Events", 100, 0, 500);
     TH1D* h_pulse_variance_nue = new TH1D("pulse_variance_nue", "Pulse Timing Variance for #nu_{e} + d;Variance (µs);Events", 100, 0, 0.1);
     TH1D* h_pulse_variance_oxygen = new TH1D("pulse_variance_oxygen", "Pulse Timing Variance for #nu_{e} + O;Variance (µs);Events", 100, 0, 0.1);
-    
-    // Veto efficiency histograms
-    TH1D* h_muon_veto_eff = new TH1D("muon_veto_eff", "Muon Veto Efficiency;Veto Efficiency;Counts", 100, 0, 1);
-    TH1D* h_michel_veto_eff = new TH1D("michel_veto_eff", "Michel Veto Efficiency;Veto Efficiency;Counts", 100, 0, 1);
-    TH1D* h_signal_retention = new TH1D("signal_retention", "Signal Retention Efficiency;Retention Efficiency;Counts", 100, 0, 1);
-    TH1D* h_false_veto_rate = new TH1D("false_veto_rate", "False Veto Rate;False Veto Rate;Counts", 100, 0, 1);
     
     // Per-PMT histograms
     TH1D* h_pmt_energy_all_pmt[N_PMTS];
@@ -627,9 +611,22 @@ int main(int argc, char *argv[]) {
         std::set<double> michel_muon_times;
         std::vector<std::pair<double, double>> muon_candidates;
         cout << "Processing " << numEntries << " entries for event detection in " << inputFileName << endl;
+        
+        // File-specific counters
+        long file_events = 0;
+        long file_muons = 0;
+        long file_michels = 0;
+        long file_gammas = 0;
+        long file_nue = 0;
+        long file_nue_oxygen = 0;
+        long file_clean_cosmic = 0;
+        long file_untagged = 0;
+        long file_after_veto = 0;
+        
         for (int iEnt = 0; iEnt < numEntries; iEnt++) {
             t->GetEntry(iEnt);
-            num_events++;
+            file_events++;
+            total_global_events++;
             hMyTriggerBits->Fill(triggerBits);
             trigger_counts[triggerBits]++;
             if (triggerBits < 0 || triggerBits > 36) {
@@ -768,10 +765,11 @@ int main(int argc, char *argv[]) {
                 no_event61 = false;
             }
             
-            // Gamma-like event selection - UPDATED WITHOUT ENERGY REQUIREMENT
+            // Gamma-like event selection
             p.is_gamma = is_gamma_like_event(p, sipm_energies);
             if (p.is_gamma) {
-                total_gamma++;
+                file_gammas++;
+                total_global_gammas++;
                 h_gamma_energy->Fill(p.energy);
                 if (gamma_events.size() < MAX_EVENTS_TO_PRINT) {
                     gamma_events.push_back({inputFileName, eventID});
@@ -782,9 +780,9 @@ int main(int argc, char *argv[]) {
             if (is_muon_event(p, sipm_energies)) {
                 p.is_muon = true;
                 last_muon_time = p.start;
-                num_muons++;
+                file_muons++;
+                total_global_muons++;
                 muon_candidates.emplace_back(p.start, p.energy);
-                total_muons++;
                 
                 if (muon_events.size() < MAX_EVENTS_TO_PRINT) {
                     muon_events.push_back({inputFileName, eventID});
@@ -796,8 +794,8 @@ int main(int argc, char *argv[]) {
             bool is_michel_for_dt = is_michel_candidate && p.energy <= MICHEL_ENERGY_MAX_DT;
             if (is_michel_candidate) {
                 p.is_michel = true;
-                num_michels++;
-                total_michels++;
+                file_michels++;
+                total_global_michels++;
                 michel_muon_times.insert(last_muon_time);
                 hMyMichelEnergy->Fill(p.energy);
                 
@@ -837,8 +835,8 @@ int main(int argc, char *argv[]) {
                     if (p.energy >= NUE_ENERGY_MIN && p.energy <= NUE_ENERGY_MAX &&
                         !any_sipm_high && p.pmt_variance < PMT_VARIANCE_MAX && p.single) {
                         p.is_nue = true;
-                        num_nue++;
-                        total_nue++;
+                        file_nue++;
+                        total_global_nue++;
                         hMyNueEnergy->Fill(p.energy);
                         hMyNueDt->Fill(beam_dt);
                         hMyNuePmtHits->Fill(p.number);
@@ -857,7 +855,8 @@ int main(int argc, char *argv[]) {
                         hMyNueOxygenSiPM->Fill(p.all_sipm_energy);
                         h_pmt_variance_oxygen->Fill(p.pmt_variance);
                         h_pulse_variance_oxygen->Fill(pulse_variance);
-                        num_nue_oxygen++;
+                        file_nue_oxygen++;
+                        total_global_nue_oxygen++;
                     }
                 } else {
                     hMyNueBkgEnergy->Fill(p.energy);
@@ -870,13 +869,13 @@ int main(int argc, char *argv[]) {
             
             // Clean cosmic = tagged + untagged
             if (p.is_tagged || p.is_untagged) {
-                num_clean_cosmic++;
+                file_clean_cosmic++;
+                total_global_clean_cosmic++;
                 h_pmt_energy_cosmic->Fill(p.energy);
                 h_sipm_cosmic->Fill(p.all_sipm_energy);
                 
                 if (p.is_gamma) {
                     h_sipm_gamma_cosmic->Fill(p.all_sipm_energy);
-                    num_gamma_cosmic++;
                 }
                 
                 if (cosmic_events.size() < MAX_EVENTS_TO_PRINT) {
@@ -896,12 +895,12 @@ int main(int argc, char *argv[]) {
             
             // Untagged events
             if (p.is_untagged) {
+                file_untagged++;
+                total_global_untagged++;
                 h_pmt_energy_untagged->Fill(p.energy);
                 h_sipm_untagged->Fill(p.all_sipm_energy);
                 h_pmt_hits_untagged->Fill(p.number);
                 h_dt_untagged->Fill(beam_dt);
-                total_num_untagged++;
-                total_untagged++;
                 
                 if (untagged_events.size() < MAX_EVENTS_TO_PRINT) {
                     untagged_events.push_back({inputFileName, eventID});
@@ -919,11 +918,13 @@ int main(int argc, char *argv[]) {
                 }
             }
             
-            // Veto-passing selection
+            // After-veto selection
             if (is_base_cosmic(p) && 
                 !p.is_muon && !p.is_michel && !p.is_gamma &&
                 is_sipm_low(sipm_energies) &&
                 p.number >= 1 && p.energy > 1) {
+                file_after_veto++;
+                total_global_after_veto++;
                 h_pmt_energy_veto_pass->Fill(p.energy);
                 h_pmt_energy_after_veto->Fill(p.energy);
                 h_sipm_veto_pass->Fill(p.all_sipm_energy);
@@ -932,7 +933,6 @@ int main(int argc, char *argv[]) {
                         h_pmt_energy_veto_pass_pmt[pmt]->Fill(p.pmt_energies[pmt]);
                     }
                 }
-                total_num_veto_pass++;
             }
             
             if (p.start > last_muon_time) {
@@ -948,25 +948,18 @@ int main(int argc, char *argv[]) {
         }
         
         cout << "File " << inputFileName << " Statistics:\n";
-        cout << "Total Events: " << num_events << "\n";
-        cout << "Muons Detected: " << num_muons << "\n";
-        cout << "Michel Electrons Detected: " << num_michels << "\n";
-        cout << "Gamma-like Events Detected: " << total_gamma << "\n";
-        cout << "νₑ + d Signal Events: " << num_nue << "\n";
-        cout << "νₑ + O Background Events: " << num_nue_oxygen << "\n";
-        cout << "Clean Cosmic Events (Tagged + Untagged): " << num_clean_cosmic << "\n";
-        cout << "Untagged Events: " << total_num_untagged << "\n";
+        cout << "Total Events: " << file_events << "\n";
+        cout << "Muons Detected: " << file_muons << "\n";
+        cout << "Michel Electrons Detected: " << file_michels << "\n";
+        cout << "Gamma-like Events Detected: " << file_gammas << "\n";
+        cout << "νₑ + d Signal Events: " << file_nue << "\n";
+        cout << "νₑ + O Background Events: " << file_nue_oxygen << "\n";
+        cout << "Clean Cosmic Events (Tagged + Untagged): " << file_clean_cosmic << "\n";
+        cout << "Untagged Events: " << file_untagged << "\n";
+        cout << "After-Veto Events: " << file_after_veto << "\n";
         cout << "------------------------\n";
         f->Close();
         delete f;
-        num_events = 0;
-        num_muons = 0;
-        num_michels = 0;
-        num_nue = 0;
-        num_nue_oxygen = 0;
-        num_clean_cosmic = 0;
-        total_num_untagged = 0;
-        total_gamma = 0;
     }
     
     // Print event IDs for diagnostics
@@ -1008,39 +1001,23 @@ int main(int argc, char *argv[]) {
     }
     cout << "==============================================\n\n";
     
-    // Calculate veto efficiencies
-    double muon_veto_eff = total_muons > 0 ? (double)muons_vetoed / total_muons : 0;
-    double michel_veto_eff = total_michels > 0 ? (double)michels_vetoed / total_michels : 0;
-    double gamma_veto_eff = total_gamma > 0 ? (double)gamma_vetoed / total_gamma : 0;
-    double signal_retention = total_nue > 0 ? (double)nue_passing_veto / total_nue : 0;
-    double false_veto_rate = total_untagged > 0 ? (double)untagged_vetoed / total_untagged : 0;
-    
-    // Fill veto efficiency histograms
-    h_muon_veto_eff->Fill(muon_veto_eff);
-    h_michel_veto_eff->Fill(michel_veto_eff);
-    h_signal_retention->Fill(signal_retention);
-    h_false_veto_rate->Fill(false_veto_rate);
-    
     cout << "Trigger Bits Distribution (all files):\n";
     for (const auto& pair : trigger_counts) {
         cout << "Trigger " << pair.first << ": " << pair.second << " events\n";
     }
     cout << "------------------------\n";
-    cout << "Veto Efficiency Analysis:\n";
-    cout << "Total Muons: " << total_muons << endl;
-    cout << "Muon Veto Efficiency: " << muon_veto_eff * 100 << "%" << endl;
-    cout << "Total Michels: " << total_michels << endl;
-    cout << "Michel Veto Efficiency: " << michel_veto_eff * 100 << "%" << endl;
-    cout << "Total Gamma-like: " << total_gamma << endl;
-    cout << "Gamma Veto Efficiency: " << gamma_veto_eff * 100 << "%" << endl;
-    cout << "Total νₑ Candidates: " << total_nue << endl;
-    cout << "νₑ Passing Veto: " << nue_passing_veto << endl;
-    cout << "Signal Retention Efficiency: " << signal_retention * 100 << "%" << endl;
-    cout << "Total Untagged Events: " << total_untagged << endl;
-    cout << "False Veto Rate: " << false_veto_rate * 100 << "%" << endl;
-    cout << "Clean Cosmic Events (Tagged + Untagged): " << num_clean_cosmic << "\n";
-    cout << "νₑ + O Background Events: " << hMyNueOxygenEnergy->GetEntries() << "\n";
-    cout << "------------------------\n";
+    
+    cout << "\n=== FINAL GLOBAL SUMMARY ===\n";
+    cout << "Total Events: " << total_global_events << "\n";
+    cout << "Total Muons: " << total_global_muons << "\n";
+    cout << "Total Michels: " << total_global_michels << "\n";
+    cout << "Total Gamma-like Events: " << total_global_gammas << "\n";
+    cout << "Total νₑ + d Signal Events: " << total_global_nue << "\n";
+    cout << "Total νₑ + O Background Events: " << total_global_nue_oxygen << "\n";
+    cout << "Total Clean Cosmic Events: " << total_global_clean_cosmic << "\n";
+    cout << "Total Untagged Events: " << total_global_untagged << "\n";
+    cout << "Total After-Veto Events: " << total_global_after_veto << "\n";
+    cout << "===========================\n";
     
     // Create all plots
     TCanvas *c = new TCanvas("c", "Analysis Plots", 1200, 800);
@@ -1383,50 +1360,13 @@ int main(int argc, char *argv[]) {
     h_pmt_energy_veto_pass->Draw("SAME HIST");
     gPad->SetLogy();
     TLegend* leg_categories = new TLegend(0.4, 0.75, 0.6, 0.85);
-    leg_categories->AddEntry(h_pmt_energy_cosmic, "Clean Cosmic Events", "l");
+    leg_categories->AddEntry(h_pmt_energy_cosmic, "Cosmic Events", "l");
     leg_categories->AddEntry(h_pmt_energy_tagged, "Tagged Events", "l");
     leg_categories->AddEntry(h_pmt_energy_untagged, "Untagged Events", "l");
     leg_categories->AddEntry(h_pmt_energy_veto_pass, "Passing Veto Cut", "l");
     leg_categories->Draw();
     c->Update();
     plotName = OUTPUT_DIR + "/PMT_Energy_Categories.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-    
-    // Veto efficiency plots
-    c->Clear();
-    h_muon_veto_eff->SetLineColor(kBlue);
-    h_muon_veto_eff->SetTitle("Muon Veto Efficiency;Efficiency;Counts");
-    h_muon_veto_eff->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/Muon_Veto_Efficiency.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-    
-    c->Clear();
-    h_michel_veto_eff->SetLineColor(kRed);
-    h_michel_veto_eff->SetTitle("Michel Veto Efficiency;Efficiency;Counts");
-    h_michel_veto_eff->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/Michel_Veto_Efficiency.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-    
-    c->Clear();
-    h_signal_retention->SetLineColor(kGreen);
-    h_signal_retention->SetTitle("Signal Retention Efficiency;Efficiency;Counts");
-    h_signal_retention->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/Signal_Retention_Efficiency.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-    
-    c->Clear();
-    h_false_veto_rate->SetLineColor(kMagenta);
-    h_false_veto_rate->SetTitle("False Veto Rate;Rate;Counts");
-    h_false_veto_rate->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/False_Veto_Rate.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
     
@@ -1516,58 +1456,6 @@ int main(int argc, char *argv[]) {
     c_pmt_combined->SaveAs(plotName.c_str());
     cout << "Saved combined plot: " << plotName << endl;
 
-    // Save all histograms to a root file
-    TFile* outFile = new TFile(Form("%s/analysis_results.root", OUTPUT_DIR.c_str()), "RECREATE");
-    hMyMuonEnergy->Write();
-    hMyMichelEnergy->Write();
-    hMichelNoMuon->Write();
-    hIsolatedNonVetoed->Write();
-    hMyDtMichel->Write();
-    hMyEnergyVsDt->Write();
-    hMyTriggerBits->Write();
-    hMyNueEnergy->Write();
-    hMyNueDt->Write();
-    hMyNuePmtHits->Write();
-    hMyNueEnergyVsDt->Write();
-    hMyNueBkgEnergy->Write();
-    hMyNueOxygenEnergy->Write();
-    hMyNueOxygenDt->Write();
-    hMyNueOxygenPmtHits->Write();
-    hMyNueOxygenSiPM->Write();
-    hMyNueSiPM->Write();
-    h_pmt_energy_all->Write();
-    h_pmt_energy_after_veto->Write();
-    h_pmt_energy_cosmic->Write();
-    h_pmt_energy_untagged->Write();
-    h_pmt_energy_tagged->Write();
-    h_pmt_energy_veto_pass->Write();
-    h_sipm_untagged->Write();
-    h_pmt_hits_untagged->Write();
-    h_dt_untagged->Write();
-    h_sipm_veto_pass->Write();
-    h_dt_all->Write();
-    h_after_veto_trigger2->Write();
-    h_sipm_cosmic->Write();
-    h_sipm_tagged->Write();
-    h_sipm_gamma_cosmic->Write();
-    h_gamma_energy->Write();
-    h_pmt_variance_nue->Write();
-    h_pmt_variance_oxygen->Write();
-    h_pulse_variance_nue->Write();
-    h_pulse_variance_oxygen->Write();
-    h_muon_veto_eff->Write();
-    h_michel_veto_eff->Write();
-    h_signal_retention->Write();
-    h_false_veto_rate->Write();
-    
-    for (int i = 0; i < N_PMTS; ++i) {
-        h_pmt_energy_all_pmt[i]->Write();
-        h_pmt_energy_veto_pass_pmt[i]->Write();
-    }
-    
-    outFile->Close();
-    delete outFile;
-
     // Cleanup
     delete c;
     delete c_pmt_individual;
@@ -1609,10 +1497,6 @@ int main(int argc, char *argv[]) {
     delete h_pmt_variance_oxygen;
     delete h_pulse_variance_nue;
     delete h_pulse_variance_oxygen;
-    delete h_muon_veto_eff;
-    delete h_michel_veto_eff;
-    delete h_signal_retention;
-    delete h_false_veto_rate;
     for (int i = 0; i < N_PMTS; ++i) {
         delete h_pmt_energy_all_pmt[i];
         delete h_pmt_energy_veto_pass_pmt[i];
